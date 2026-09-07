@@ -1,61 +1,60 @@
 # LabSpectrumManager
 
-Viewer ed editor per spettri UV-Vis, FTIR e di fluorescenza: carica, sovrappone e
-confronta più spettri insieme, con cursore interattivo sul grafico e un set di strumenti di
-elaborazione — correzione scattering (Rayleigh/Mie), baseline adattiva, sottrazione scalata tra
-spettri, media, smoothing (boxcar o Savitzky-Golay) e deconvoluzione multi-picco
-(Lorentz/Gauss/pseudo-Voigt).
+Viewer and editor for UV-Vis, FTIR and fluorescence spectra: load, overlay and compare multiple
+spectra together, with an interactive cursor on the plot and a set of processing tools —
+scattering correction (Rayleigh/Mie), adaptive baseline, scaled subtraction between spectra,
+averaging, smoothing (boxcar or Savitzky-Golay) and multi-peak deconvolution
+(Lorentzian/Gaussian/pseudo-Voigt).
 
-## Formati supportati
+## Supported formats
 
-| Estensione | Tipo | Note |
+| Extension | Type | Notes |
 |---|---|---|
-| `.dsp` | UV-Vis (binario) | parser nativo |
-| `.sp` | FTIR PerkinElmer (binario) | parser nativo (nessun tool esterno richiesto) |
-| `.csv` | UV-Vis o FTIR | il tipo viene rilevato automaticamente dai valori sull'asse X |
+| `.dsp` | UV-Vis (binary) | native parser |
+| `.sp` | FTIR PerkinElmer (binary) | native parser (no external tool required) |
+| `.csv` | UV-Vis or FTIR | type auto-detected from the X-axis values |
 
-Il supporto per altri formati specifici (altri strumenti/produttori) può essere aggiunto su
-richiesta — apri una issue con un file di esempio.
+Support for other instrument/vendor-specific formats can be added on request — open an issue with
+a sample file.
 
-## Dipendenze
+## Dependencies
 
-`numpy`, `pandas`, `matplotlib`, `tkinter` (libreria standard); `tkinterdnd2` opzionale, abilita il
-trascinamento dei file nella finestra.
+`numpy`, `pandas`, `matplotlib`, `tkinter` (standard library); `tkinterdnd2` is optional and
+enables drag-and-drop file loading.
 
-## Avvio
+## Running
 
 ```
-pythonw LabSpectrumManager.pyw [file_spettro]
+pythonw LabSpectrumManager.pyw [spectrum_file]
 ```
 
-## Interfaccia
+## Interface
 
-Tre pannelli affiancati: tabella dati (spettri uniti come testo tab-separated) a sinistra, grafico
-Matplotlib con cursore a croce interattivo al centro, elenco spettri caricati (multi-selezione) con
-metadati a destra.
+Three panels side by side: a data table (merged spectra as tab-separated text) on the left, a
+Matplotlib graph with an interactive crosshair cursor in the center, and a list of loaded spectra
+(multi-select) with metadata on the right.
 
-## Strumenti di elaborazione
+## Processing tools
 
-- **Correzione scattering** — stima e sottrae una baseline della forma
-  `A · 10^VS · (λ/1000)^-P + m·λ + Offset`: il termine di potenza modella lo scattering Rayleigh
-  (P=4, particelle piccole) o Mie (P=2–3, particelle comparabili alla lunghezza d'onda), il
-  termine lineare copre derive di baseline non legate allo scattering. Dettagli teorici e
-  procedura operativa in [`scattering_correction_theory.md`](scattering_correction_theory.md).
-- **Baseline lineare** (FTIR) — baseline a due ancore trascinabili sul grafico, per spettri FTIR.
-- **Baseline adattiva** — inviluppo inferiore via medie mobili iterate con vincolo di minimo,
-  finestra regolabile con uno slider (da "piatta" a "aderente al segnale").
-- **Sottrazione scalata** — sottrae uno spettro di riferimento B da uno spettro A con un
-  coefficiente `k` regolabile (`Result = A − k × B`), utile per rimuovere il contributo del
-  solvente/bianco.
-- **Media** di più spettri selezionati.
-- **Smoothing** — media mobile ripetuta (boxcar, ~gaussiana) oppure filtro Savitzky-Golay
-  (fit polinomiale locale, preserva meglio altezza e forma dei picchi).
-- **Deconvoluzione** — fit multi-picco interattivo (clic per aggiungere/rimuovere un picco) con
-  profilo Lorentziano, Gaussiano o pseudo-Voigt.
+- **Scattering correction** — estimates and subtracts a baseline of the form
+  `A · 10^VS · (λ/1000)^-P + m·λ + Offset`: the power term models Rayleigh scattering
+  (P=4, small particles) or Mie scattering (P=2–3, particles comparable to the wavelength), the
+  linear term covers baseline drift unrelated to scattering. Theory and operating procedure in
+  [`scattering_correction_theory.md`](scattering_correction_theory.md).
+- **Linear baseline** (FTIR) — a two-anchor baseline, draggable on the graph, for FTIR spectra.
+- **Adaptive baseline** — a lower envelope via iterated moving averages with a minimum
+  constraint, adjustable window via a slider (from "flat" to "hugging the signal").
+- **Scaled subtraction** — subtracts a reference spectrum B from a spectrum A with an adjustable
+  coefficient `k` (`Result = A − k × B`), useful for removing a solvent/blank contribution.
+- **Average** of several selected spectra.
+- **Smoothing** — repeated moving average (boxcar, ~Gaussian) or Savitzky-Golay filter (local
+  polynomial fit, better preserves peak height and shape).
+- **Deconvolution** — interactive multi-peak fit (click to add/remove a peak) with a
+  Lorentzian, Gaussian or pseudo-Voigt profile.
 
-## Struttura
+## Structure
 
-- `LabSpectrumManager.pyw` — applicazione principale (un'unica classe `LabSpectrumManager`)
-- `old version and side projects/` — versioni precedenti (v0-v2) e side-project (`scattering.pyw`,
-  `spc_plotter.pyw`) tenuti come riferimento storico
-- `test_sp_reader.py` — test del parser nativo per il formato `.sp` (FTIR PerkinElmer)
+- `LabSpectrumManager.pyw` — main application (a single `LabSpectrumManager` class)
+- `old version and side projects/` — earlier versions (v0-v2) and side projects
+  (`scattering.pyw`, `spc_plotter.pyw`) kept as historical reference
+- `test_sp_reader.py` — test for the native `.sp` parser (FTIR PerkinElmer)
