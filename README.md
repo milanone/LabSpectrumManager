@@ -1,6 +1,6 @@
 # LabSpectrumManager
 
-Viewer ed editor per spettri di laboratorio (UV-Vis, FTIR, fluorescenza): carica, sovrappone e
+Viewer ed editor per spettri UV-Vis, FTIR e di fluorescenza: carica, sovrappone e
 confronta più spettri insieme, con cursore interattivo sul grafico e un set di strumenti di
 elaborazione — correzione scattering (Rayleigh/Mie), baseline adattiva, sottrazione scalata tra
 spettri, media, smoothing (boxcar o Savitzky-Golay) e deconvoluzione multi-picco
