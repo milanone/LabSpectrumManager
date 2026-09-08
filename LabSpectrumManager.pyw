@@ -433,20 +433,67 @@ class LabSpectrumManager:
             return
         x_ref, y_ref = x[mask], y[mask]
 
-        # Modello lineare: VS*(x/1000)^-P - M*x + OFF = y
-        A_mat = np.column_stack([
+        # Modello lineare: VS*(x/1000)^-P - M*x + OFF = y (fit sulla finestra)
+        A_ref = np.column_stack([
             (x_ref / 1000.0) ** -P,
             -x_ref,
             np.ones_like(x_ref),
         ])
-        coeffs, _, _, _ = np.linalg.lstsq(A_mat, y_ref, rcond=None)
-        VS_fit, M_fit, OFF_fit = coeffs
+        coeffs, _, _, _ = np.linalg.lstsq(A_ref, y_ref, rcond=None)
+        VS0, M0, OFF0 = float(max(coeffs[0], 0.0)), float(coeffs[1]), float(coeffs[2])
+
+        # Punto di partenza ammissibile: abbassa l'offset finché la traccia è sotto lo spettro
+        corr_full = VS0 * (x / 1000.0) ** -P - M0 * x + OFF0
+        over = float(np.max(corr_full - y))
+        if over > 0:
+            OFF0 -= over
+        p = np.array([VS0, M0, OFF0], dtype=float)
+
+        # Rifinitura vincolata: varia VS, M e OFF insieme per il miglior fit nella
+        # finestra col vincolo (traccia ≤ spettro in ogni punto). Richiede scipy;
+        # senza scipy resta la soluzione ammissibile con solo l'offset abbassato.
+        try:
+            from scipy.optimize import minimize
+            step = max(1, len(x) // 800)          # decima i vincoli (la traccia è liscia)
+            xc, yc = x[::step], y[::step]
+            Ac = np.column_stack([(xc / 1000.0) ** -P, -xc, np.ones_like(xc)])
+
+            # Riscala le colonne (VS, M e la colonna x hanno ordini di grandezza
+            # molto diversi): senza questo l'ottimizzatore è mal condizionato
+            s = np.maximum(np.abs(A_ref).max(axis=0), 1e-12)
+            Ars, Acs = A_ref / s, Ac / s
+
+            def _f(q):
+                r = Ars @ q - y_ref
+                return float(r @ r)
+
+            def _fjac(q):
+                return 2.0 * Ars.T @ (Ars @ q - y_ref)
+
+            cons = [{'type': 'ineq',
+                     'fun': lambda q: yc - Acs @ q,
+                     'jac': lambda q: -Acs}]
+            res = minimize(_f, p * s, jac=_fjac, method='SLSQP',
+                           bounds=[(0.0, None), (None, None), (None, None)],
+                           constraints=cons, options={'maxiter': 500, 'ftol': 1e-12})
+            if np.all(np.isfinite(res.x)):
+                p = res.x / s
+        except ImportError:
+            pass
+
+        VS_fit, M_fit, OFF_fit = float(max(p[0], 0.0)), float(p[1]), float(p[2])
+
+        # Garanzia finale su TUTTI i punti (il vincolo SLSQP era su griglia decimata)
+        corr_full = VS_fit * (x / 1000.0) ** -P - M_fit * x + OFF_fit
+        over = float(np.max(corr_full - y))
+        if over > 0:
+            OFF_fit -= over
 
         # Usa i valori reali del fit (VS ≥ 0); se eccedono il range dello slider
         # la casella li mostra comunque e lo slider resta agganciato al massimo
-        self._linked_set(self._sc_VS,  round(max(float(VS_fit), 0.0), 6))
-        self._linked_set(self._sc_M,   round(float(M_fit), 8))
-        self._linked_set(self._sc_OFF, round(float(OFF_fit), 6))
+        self._linked_set(self._sc_VS,  round(VS_fit, 6))
+        self._linked_set(self._sc_M,   round(M_fit, 8))
+        self._linked_set(self._sc_OFF, round(OFF_fit, 6))
 
     # --- SCATTERING: drag delle linee verticali ---
     def _sc_aggiorna_range_label(self):
