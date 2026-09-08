@@ -22,7 +22,8 @@ a sample file.
 ## Dependencies
 
 `numpy`, `pandas`, `matplotlib`, `tkinter` (standard library); `tkinterdnd2` is optional and
-enables drag-and-drop file loading.
+enables drag-and-drop file loading; `scipy` is optional and enables the constrained refinement
+step in the scattering correction auto-fit (a plain least-squares fallback is used without it).
 
 ## Running
 

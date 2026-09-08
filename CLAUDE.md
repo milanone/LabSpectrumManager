@@ -18,6 +18,9 @@ No requirements file exists. The application relies on these packages being inst
 - `numpy`, `pandas`, `matplotlib` — data processing and plotting
 - `tkinter` — standard library GUI
 - `tkinterdnd2` — optional, enables drag-and-drop file loading
+- `scipy` — optional, enables the constrained-refinement step in the scattering correction
+  auto-fit (`scipy.optimize.minimize`, SLSQP); without it, the auto-fit falls back to the plain
+  least-squares solution with a per-point offset clamp
 
 No external binaries required — `.sp` (FTIR PerkinElmer) files are parsed natively (see `leggi_sp()` below).
 
