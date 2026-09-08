@@ -6,6 +6,8 @@ scattering correction (Rayleigh/Mie), adaptive baseline, scaled subtraction betw
 averaging, smoothing (boxcar or Savitzky-Golay) and multi-peak deconvolution
 (Lorentzian/Gaussian/pseudo-Voigt).
 
+![LabSpectrumManager screenshot](screenshot.png)
+
 ## Supported formats
 
 | Extension | Type | Notes |
