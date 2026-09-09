@@ -5,6 +5,7 @@ import sys
 import struct
 import re
 import datetime
+import pickle
 import traceback
 import tkinter as tk
 from tkinter import filedialog, scrolledtext, messagebox, Listbox
@@ -17,12 +18,54 @@ try:
 except ImportError:
     HAS_DND = False
 
+# Stile "Origin-like" condiviso col repo fratello PlotStyleKit (così LabSpectrumManager,
+# KleistekManager e pca-gui usano lo stesso modulo senza duplicarlo). Caricato per path,
+# cercando PRIMA una copia locale in questa cartella (per fissare una versione specifica
+# per questo solo programma, se mai servisse) e POI la cartella fratella ../PlotStyleKit
+# condivisa; fallback no-op se manca del tutto (vedi il warning mostrato all'avvio in
+# __init__). I rcParams vengono impostati subito, prima di creare qualunque figura, così
+# i grafici nascono già in stile Origin.
+def _carica_origin_style():
+    import importlib.util as ilu
+    here = os.path.dirname(os.path.abspath(__file__))
+    for path in (os.path.join(here, 'origin_style.py'),
+                 os.path.join(here, '..', 'PlotStyleKit', 'origin_style.py')):
+        if os.path.isfile(path):
+            spec = ilu.spec_from_file_location('origin_style', path)
+            mod = ilu.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+    return None
+
+try:
+    origin_style = _carica_origin_style()
+    if origin_style is not None:
+        origin_style.applica_rcparams()
+except Exception:
+    origin_style = None
+
 
 class LabSpectrumManager:
     def __init__(self, root):
         self.root = root
         self.root.title("Lab Spectrum Manager (UV-Vis + FTIR + Fluorescence)")
         self.root.geometry("1500x900")
+
+        if origin_style is None:
+            # avviso non bloccante: l'app funziona comunque (stile matplotlib di
+            # default), ma senza il look Origin né "Edit Figure..."; lo si nota
+            # solo guardando il grafico se non si avvisa esplicitamente qui.
+            self.root.after(200, lambda: messagebox.showwarning(
+                "PlotStyleKit non trovato",
+                "Il repo condiviso PlotStyleKit (origin_style.py / plot_editor.pyw) non è stato "
+                "trovato né come copia locale in questa cartella né come cartella fratella "
+                "..\\PlotStyleKit.\n\n"
+                "I grafici useranno lo stile matplotlib di default (niente look Origin) e "
+                "\"Edit Figure...\" non sarà disponibile.\n\n"
+                "Clona https://github.com/milanone/PlotStyleKit accanto a questo progetto per "
+                "abilitarli."))
+
+        self._pe_module = None       # modulo plot_editor, caricato alla prima necessità
 
         self.spectra = {}
         self.v_line = None
@@ -103,6 +146,8 @@ class LabSpectrumManager:
         self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.file_menu.add_command(label="Open Files (.dsp, .sp, .spc, .csv)", command=self.carica_da_dialog)
         self.file_menu.add_command(label="Export CSV", command=self.esporta_csv)
+        self.file_menu.add_command(label="Save Figure (pickle)", command=self.salva_figura_pickle)
+        self.file_menu.add_command(label="Edit Figure...", command=self.apri_editor_figura)
         self.file_menu.add_separator()
         self.file_menu.add_command(label="Exit", command=root.quit)
         self.menu_bar.add_cascade(label="File", menu=self.file_menu)
@@ -2900,6 +2945,90 @@ class LabSpectrumManager:
         if path:
             dfs = [s['df'] for s in self.spectra.values()]
             pd.concat(dfs, axis=1).round(4).to_csv(path)
+
+    def _pulisci_cursore(self):
+        """Rimuove l'overlay interattivo del cursore (linea verticale + testo) dagli
+        assi, così non finisce incollato nella figura salvata/passata all'editor."""
+        if self.v_line is not None:
+            self.v_line.remove()
+            self.v_line = None
+        if self.v_text is not None:
+            self.v_text.remove()
+            self.v_text = None
+
+    def salva_figura_pickle(self):
+        """Salva la figura matplotlib corrente come pickle: riapribile con
+        plot_editor.pyw come oggetto Figure/Axes live (non un raster congelato)."""
+        if not self.spectra:
+            messagebox.showwarning("Save Figure", "Nessuno spettro caricato.")
+            return
+        path = filedialog.asksaveasfilename(
+            initialdir=self.current_dir, defaultextension='.fig.pickle',
+            filetypes=[("Matplotlib Figure (pickle)", "*.pickle *.pkl"), ("All Files", "*.*")])
+        if not path:
+            return
+        try:
+            self._pulisci_cursore()   # rimuove l'overlay del cursore prima di copiare
+            # Salva una copia dimensionata allo stile Origin (single 4:3), non la
+            # figura live stirata sul pannello.
+            fig_out = pickle.loads(pickle.dumps(self.fig))
+            if origin_style is not None and fig_out.axes:
+                origin_style.applica_stile_origin(fig_out.axes[0], fig_out, set_size=True, preset='single')
+            with open(path, 'wb') as f:
+                pickle.dump(fig_out, f)
+        except Exception as e:
+            traceback.print_exc()
+            messagebox.showerror("Save Figure", f"Salvataggio fallito:\n{e}")
+            return
+        messagebox.showinfo("Save Figure", f"Figura salvata:\n{path}")
+
+    def _carica_plot_editor(self):
+        """Importa (una sola volta) il modulo plot_editor: prima un'eventuale copia
+        locale in questa cartella, poi il repo fratello PlotStyleKit."""
+        if self._pe_module is None:
+            import importlib.util
+            here = os.path.dirname(os.path.abspath(__file__))
+            candidates = [os.path.join(here, 'plot_editor.pyw'),
+                          os.path.join(here, '..', 'PlotStyleKit', 'plot_editor.pyw')]
+            path = next((p for p in candidates if os.path.isfile(p)), None)
+            if path is None:
+                raise FileNotFoundError(
+                    "plot_editor.pyw non trovato (repo PlotStyleKit mancante accanto a questo progetto)")
+            spec = importlib.util.spec_from_file_location('plot_editor', path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            self._pe_module = mod
+        return self._pe_module
+
+    def apri_editor_figura(self):
+        """Apre il Plot Editor direttamente sulla figura corrente, in una nuova
+        finestra. L'editor lavora su una copia indipendente (round-trip pickle in
+        memoria): così può salvarla/esportarla senza interferire con la vista live,
+        che verrebbe comunque ricostruita a ogni aggiornamento."""
+        if not self.spectra:
+            messagebox.showwarning("Edit Figure", "Nessuno spettro caricato.")
+            return
+        try:
+            pe = self._carica_plot_editor()
+        except Exception as e:
+            traceback.print_exc()
+            messagebox.showerror("Edit Figure", f"plot_editor.pyw non disponibile:\n{e}")
+            return
+        try:
+            self._pulisci_cursore()   # rimuove l'overlay del cursore prima di copiare
+            fig_copy = pickle.loads(pickle.dumps(self.fig))
+        except Exception as e:
+            traceback.print_exc()
+            messagebox.showerror("Edit Figure", f"Impossibile duplicare la figura:\n{e}")
+            return
+        # La figura live è stirata sul pannello: consegna all'editor una copia già
+        # dimensionata allo stile Origin (single 4:3) invece che alla dimensione del pannello.
+        if origin_style is not None and fig_copy.axes:
+            origin_style.applica_stile_origin(fig_copy.axes[0], fig_copy, set_size=True, preset='single')
+        top = tk.Toplevel(self.root)
+        top.geometry("1300x820")
+        editor = pe.PlotEditor(top)
+        editor.carica_figura(fig_copy, title="figura corrente")
 
 if __name__ == "__main__":
     root = TkinterDnD.Tk() if HAS_DND else tk.Tk()

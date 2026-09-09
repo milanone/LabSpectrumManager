@@ -21,6 +21,14 @@ No requirements file exists. The application relies on these packages being inst
 - `scipy` — optional, enables the constrained-refinement step in the scattering correction
   auto-fit (`scipy.optimize.minimize`, SLSQP); without it, the auto-fit falls back to the plain
   least-squares solution with a per-point offset clamp
+- [PlotStyleKit](https://github.com/milanone/PlotStyleKit) — optional sibling repo (not a pip
+  package), expected as `../PlotStyleKit` next to this project's folder. Provides the shared
+  "Origin-like" matplotlib style (`origin_style.py`) and the standalone figure editor
+  (`plot_editor.pyw`, class `PlotEditor`) behind `File → Save Figure (pickle)` / `File → Edit
+  Figure...`. Loaded by path at runtime (local copy in this folder first, then the sibling
+  folder); without it the app runs normally with default matplotlib styling and those two menu
+  items unavailable — see the one-time startup warning in `__init__`. Same loading pattern and
+  reference implementation as `KleistekManager.pyw`.
 
 No external binaries required — `.sp` (FTIR PerkinElmer) files are parsed natively (see `leggi_sp()` below).
 
@@ -63,6 +71,10 @@ Loaded spectra are stored in `self.spectra` (dict):
 - `on_mouse_move()` / `on_mouse_leave()` — interactive crosshair cursor tracking on plot
 - `carica_da_dialog()` / `handle_drop()` — file import entry points (dialog and DnD)
 - `esporta_csv()` — exports merged spectra to CSV
+- `salva_figura_pickle()` / `apri_editor_figura()` — save the current figure as a live
+  `Figure` pickle / open it in PlotStyleKit's `PlotEditor` (see Dependencies above); both work
+  on an in-memory pickle round-trip copy, restyled to the Origin `single` preset, so the live
+  panel view is never mutated
 
 Method names follow Italian conventions (`leggi` = read, `aggiorna` = update, `carica` = load).
 
