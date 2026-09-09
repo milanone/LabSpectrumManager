@@ -29,6 +29,8 @@ class LabSpectrumManager:
         self.v_text = None
         self.current_dir = os.getcwd()
         self._cursor_data = []   # cache (name, x_array, y_array) per il cursore
+        self._cursor_box_pos = None   # (ax_x, ax_y, ha, va) se trascinato manualmente; None = posizione "best" automatica
+        self._cursor_drag = False     # True mentre l'utente trascina il riquadro X/Y
 
         # Stato pannello scattering
         self._sc_name     = None
@@ -120,10 +122,13 @@ class LabSpectrumManager:
         self.f_plot = tk.Frame(self.paned)
         self.fig, self.ax = plt.subplots(figsize=(6, 6))
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.f_plot)
-        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        self.toolbar = NavigationToolbar2Tk(self.canvas, self.f_plot)
+        self.toolbar = NavigationToolbar2Tk(self.canvas, self.f_plot, pack_toolbar=False)
+        self.toolbar.pack(side=tk.TOP, fill=tk.X)
+        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         self.canvas.mpl_connect('motion_notify_event', self.on_mouse_move)
         self.canvas.mpl_connect('axes_leave_event', self.on_mouse_leave)
+        self.canvas.mpl_connect('button_press_event', self._cursor_drag_start)
+        self.canvas.mpl_connect('button_release_event', self._cursor_drag_stop)
         # Incolla dati x,y dalla clipboard: clic sul grafico per il focus, poi Ctrl+V
         plot_widget = self.canvas.get_tk_widget()
         plot_widget.bind('<Button-1>', lambda e: plot_widget.focus_set(), add='+')
@@ -1989,11 +1994,56 @@ class LabSpectrumManager:
         self.f_metadata.pack(fill=tk.BOTH, expand=True)
 
     # --- CURSORE ---
-    def on_mouse_move(self, event):
-        if (not event.inaxes or not self.spectra or self._sc_name is not None
-                or self._sub_name_a is not None or self._norm_names
+    def _cursor_panel_attivo(self):
+        return (self._sc_name is not None or self._sub_name_a is not None or self._norm_names
                 or self._bl_name is not None or self._ab_name is not None
-                or self._sm_name is not None or self._dc_name is not None):
+                or self._sm_name is not None or self._dc_name is not None)
+
+    def _cursor_best_position(self):
+        """Sceglie l'angolo del grafico con minor densità di punti tracciati nelle
+        vicinanze, per evitare che il riquadro X/Y copra i dati (stile 'best' delle
+        legende di matplotlib). Restituisce (ax_x, ax_y, ha, va) in coordinate assi."""
+        corners = [(0.02, 0.98, 'left', 'top'), (0.98, 0.98, 'right', 'top'),
+                   (0.02, 0.02, 'left', 'bottom'), (0.98, 0.02, 'right', 'bottom')]
+        xlim, ylim = self.ax.get_xlim(), self.ax.get_ylim()
+        dx, dy = xlim[1] - xlim[0], ylim[1] - ylim[0]
+        if dx <= 0 or dy <= 0 or not self._cursor_data:
+            return corners[0]
+        best, best_count = corners[0], None
+        for cx, cy, ha, va in corners:
+            x0, x1 = (xlim[0], xlim[0] + 0.35 * dx) if cx < 0.5 else (xlim[1] - 0.35 * dx, xlim[1])
+            y0, y1 = (ylim[0], ylim[0] + 0.35 * dy) if cy < 0.5 else (ylim[1] - 0.35 * dy, ylim[1])
+            count = sum(int(np.count_nonzero((xs >= x0) & (xs <= x1) & (ys >= y0) & (ys <= y1)))
+                        for _, xs, ys in self._cursor_data)
+            if best_count is None or count < best_count:
+                best, best_count = (cx, cy, ha, va), count
+        return best
+
+    def _cursor_drag_start(self, event):
+        if self.v_text is None or event.button != 1 or self._cursor_panel_attivo():
+            return
+        renderer = self.canvas.get_renderer()
+        if renderer is None:
+            return
+        if self.v_text.get_window_extent(renderer).contains(event.x, event.y):
+            self._cursor_drag = True
+
+    def _cursor_drag_stop(self, event):
+        self._cursor_drag = False
+
+    def on_mouse_move(self, event):
+        if self._cursor_drag:
+            if self.v_text is not None and event.x is not None and event.y is not None:
+                ax_x, ax_y = self.ax.transAxes.inverted().transform((event.x, event.y))
+                ha = 'left' if ax_x <= 0.5 else 'right'
+                va = 'bottom' if ax_y <= 0.5 else 'top'
+                self._cursor_box_pos = (ax_x, ax_y, ha, va)
+                self.v_text.set_position((ax_x, ax_y))
+                self.v_text.set_ha(ha)
+                self.v_text.set_va(va)
+                self.canvas.draw_idle()
+            return
+        if not event.inaxes or not self.spectra or self._cursor_panel_attivo():
             return
         x = event.xdata
         if self.v_line: self.v_line.remove()
@@ -2003,14 +2053,17 @@ class LabSpectrumManager:
         for name, xs, ys in self._cursor_data:
             idx = np.argmin(np.abs(xs - x))
             cursor_txt += f"{name[:15]}: {ys[idx]:.4f}\n"
+        ax_x, ax_y, ha, va = self._cursor_box_pos or self._cursor_best_position()
         self.v_text = self.ax.text(
-            0.02, 0.98, cursor_txt, transform=self.ax.transAxes,
-            verticalalignment='top', fontsize=8,
+            ax_x, ax_y, cursor_txt, transform=self.ax.transAxes,
+            horizontalalignment=ha, verticalalignment=va, fontsize=8,
             bbox=dict(facecolor='white', alpha=0.7)
         )
         self.canvas.draw_idle()
 
     def on_mouse_leave(self, event):
+        if self._cursor_drag:
+            return
         if self.v_line: self.v_line.remove(); self.v_line = None
         if self.v_text: self.v_text.remove(); self.v_text = None
         self.canvas.draw_idle()
