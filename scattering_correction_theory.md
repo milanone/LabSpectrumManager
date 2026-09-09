@@ -4,61 +4,76 @@ La correzione rimuove dallo spettro misurato un **baseline artificiale** generat
 
 ---
 
-## Origine fisica
+## Parte 1 — Teoria fisica
 
-Quando la luce attraversa una soluzione contenente particelle (aggregati, colloidi, polveri in sospensione, membrane), una frazione viene **deviata** invece di essere assorbita. Lo spettrofotometro registra questa deviazione come "assorbanza apparente", sovrapposta al segnale reale.
+### Origine fisica
 
----
+Quando la luce attraversa una soluzione contenente particelle (aggregati, colloidi, polveri in sospensione, membrane, cellule), una frazione viene **deviata** invece di essere assorbita. Lo spettrofotometro registra questa deviazione come "assorbanza apparente", sovrapposta al segnale reale.
 
-## Legge di potenza (Rayleigh / Mie)
+### Legge di potenza (Rayleigh / Mie)
 
 L'intensità dello scattering dipende dalla lunghezza d'onda secondo una legge di potenza:
 
-$$S(\lambda) = A_{eff} \cdot \lambda^{-P}$$
+$$S(\lambda) \propto \lambda^{-P}$$
 
 | P | Regime | Particelle tipiche |
 |---|--------|-------------------|
 | **4** | Rayleigh | Molto più piccole della λ (proteine, nanoparticelle < 50 nm). Decade rapidamente verso il rosso. |
 | **2–3** | Mie | Comparabili alla λ (liposomi, membrane, aggregati). Più piatto e persistente. |
-| **< 2** | Mie estremo / scattering multiplo | Particelle grandi. |
+| **1** | Mie estremo / scattering multiplo | Particelle grandi rispetto a λ (es. cellule intere, ~1–2 µm). Curva quasi piatta. |
 
-In pratica P si sceglie empiricamente osservando quanto è "ripida" la coda verso il blu.
+In generale P non è un parametro libero su tutto l'asse reale: sotto P≈1 la legge di potenza `λ^-P` si appiattisce verso una costante e smette di essere distinguibile, in un fit, dal semplice offset verticale — il modello perde di significato fisico ancora prima che matematico. Per questo motivo P ha senso solo per P ≥ 1 (si veda la Parte 2 per il vincolo effettivo usato dal programma).
 
----
+### Deriva residua non riconducibile allo scattering
 
-## Componente lineare
-
-In molti campioni reali si sovrappone una **deriva lineare di baseline** indipendente dallo scattering classico, dovuta a:
+In alcuni campioni reali può sovrapporsi una **deriva di baseline** che non segue la legge di potenza dello scattering, dovuta ad esempio a:
 
 - disuniformità ottiche della cuvetta
 - differenze di indice di rifrazione tra campione e riferimento
-- scattering multiplo a bassa frequenza
+- imperfezioni strumentali a bassa frequenza
 
-Questa componente non segue una legge di potenza e non viene rimossa dal termine $A_{eff} \cdot \lambda^{-P}$. Va trattata separatamente come termine lineare $m \cdot \lambda$.
+Quando presente, in prima approssimazione (su un intervallo spettrale non troppo esteso) può essere descritta come una componente lineare in λ, da sottrarre in aggiunta al termine di scattering.
 
 ---
 
-## Formula completa implementata
+## Parte 2 — Implementazione nel programma
 
-$$\text{correction}(\lambda) = A \cdot 10^{VS} \cdot \left(\frac{\lambda}{1000}\right)^{-P} + m \cdot \lambda + \text{Offset}$$
+### Formula usata
 
-| Parametro | Ruolo | Quando usarlo |
+Il pannello "Scattering Correction" calcola e sottrae dallo spettro la seguente correzione:
+
+$$\text{correction}(\lambda) = VS \cdot \left(\frac{\lambda}{1000}\right)^{-P} - M \cdot \lambda + \text{OFF}$$
+
+| Parametro | Ruolo | Range nel programma |
 |---|---|---|
-| **A** | Ampiezza dello scattering | Sempre, se c'è scattering |
-| **VS** | Fattore di scala logaritmico per A | Quando A è molto piccolo o molto grande |
-| **P** | Esponente (2, 3, 4) | Dipende dalla dimensione delle particelle |
-| **m** | Pendenza della componente lineare | Se la baseline è inclinata dopo il termine di potenza |
-| **Offset** | Traslazione verticale costante | Per azzerare la baseline a λ alte dove lo scattering è trascurabile |
+| **VS** | Ampiezza dello scattering (vincolata ≥ 0) | Slider continuo, calibrato sull'ampiezza dello spettro caricato |
+| **P** | Esponente della legge di potenza | Slider continuo **1.0 – 5.0**, con preset rapidi 1/2/3/4 |
+| **M** | Pendenza della deriva lineare residua | Slider continuo; **0 di default**, bloccato da "fix slope" (vedi sotto) |
+| **OFF** | Traslazione verticale costante | Slider continuo, per azzerare la baseline dove lo scattering è trascurabile |
 
----
+Il limite inferiore P ≥ 1 non è arbitrario: è il punto in cui il termine di potenza degenera (vedi Parte 1). Un test su uno spettro reale (`spettro_sphaer.csv`) ha mostrato che abbassare il limite a 0.1 riduce l'SSE nella finestra di fit solo di ~4‰, ma fa divergere VS e OFF verso valori enormi e di segno opposto che si cancellano a vicenda — un guadagno numerico irrilevante pagato con un fit non identificabile.
 
-## Procedura operativa consigliata
+### Il termine lineare M: perché esiste ma è bloccato di default
 
-1. Partire da **P = 4** (Rayleigh) e aumentare A fino a correggere la coda UV
-2. Se residua una pendenza, abbassare P a 3 o 2 (Mie)
-3. Se rimane un tilt, aggiustare **m** (Slope)
-4. Usare **Offset** per traslare la baseline a zero in una zona priva di assorbanza reale (tipicamente > 750 nm per la maggior parte dei cromofori biologici)
+La componente lineare `M·λ` intercetta derive di baseline non spiegabili dal termine di potenza (vedi Parte 1). Con P libero nell'intervallo [1, 5], il termine di potenza da solo copre la quasi totalità dei casi osservati: quando P è stimato correttamente, M resta vicino a zero anche quando è incluso nel fit.
 
----
+Per questo **M è fissato a 0 di default** (checkbox "fix slope" attivo) e va sbloccato solo se l'auto-fit non converge in modo soddisfacente lasciando P libero — cioè come rete di sicurezza, non come parametro di uso corrente.
 
-> La stima dei parametri è visiva/empirica: non esiste un metodo automatico universale perché la proporzione tra scattering Rayleigh, Mie e deriva lineare dipende dal campione specifico.
+### Auto-fit vincolato
+
+Il pulsante "Auto (fit window)" stima i parametri risolvendo un problema di minimi quadrati vincolato (SLSQP, richiede `scipy`) sulla finestra delimitata dalle due linee verticali trascinabili — che per default coprono l'intero spettro: l'algoritmo vincolato converge in modo affidabile su tutta la banda:
+
+- il vincolo di disuguaglianza impone che la traccia di correzione non superi mai lo spettro misurato (traccia ≤ spettro, punto per punto);
+- se **"fix P" non è spuntato**, l'esponente P viene ottimizzato insieme a VS, OFF (e M, se sbloccato) entro i limiti [1, 5]; se è spuntato, P resta al valore corrente e il fit si riduce a un problema lineare (risolto con jacobiano analitico, più veloce e stabile);
+- se **"fix slope" non è spuntato**, M viene incluso tra i parametri liberi del fit; se è spuntato (default), resta bloccato al valore corrente (0 di norma) e il fit ottimizza solo VS, OFF (ed eventualmente P);
+- senza `scipy` installato, l'auto-fit si riduce alla soluzione ai minimi quadrati non vincolata, con un abbassamento dell'offset a posteriori per garantire comunque traccia ≤ spettro.
+
+### Procedura operativa consigliata
+
+1. Selezionare lo spettro e aprire "Scattering Correction": le linee di finestra coprono già tutto lo spettro.
+2. Premere **Auto (fit window)** lasciando P libero e "fix slope" attivo (default): nella maggior parte dei casi è sufficiente.
+3. Se il residuo mostra ancora una pendenza sistematica, provare a sbloccare **"fix slope"** e rilanciare Auto.
+4. Se si vuole forzare un regime fisico noto a priori (es. P=4 per particelle molto piccole), spuntare **"fix P"**, impostare il preset desiderato e rilanciare Auto: verranno ottimizzati solo VS (e OFF, M).
+5. Usare **Offset** per rifiniture manuali, tipicamente per azzerare la baseline in una zona priva di assorbanza reale (es. > 750 nm per molti cromofori biologici).
+
+> La stima dei parametri combina un auto-fit vincolato, che copre il caso generale, con l'intervento manuale — lock di P e/o M, regolazione fine dei singoli slider — per casi limite o per imporre un regime fisico noto a priori.

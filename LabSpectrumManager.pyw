@@ -234,16 +234,26 @@ class LabSpectrumManager:
         # Tre parametri, ciascuno slider fine + casella editabile (valori a piacimento)
         self._sc_VS  = self._make_linked_row(ctrl, 'VS',        0.0,    0.3,   0.0002,   '{:.4f}')
         self._sc_M   = self._make_linked_row(ctrl, 'Slope (m)', -0.001, 0.001, 0.000002, '{:.6f}')
+        self._sc_M_lock = tk.BooleanVar(value=True)
+        m_lock_row = tk.Frame(ctrl, bg=bg)
+        m_lock_row.pack(fill=tk.X, pady=(0, 3))
+        tk.Label(m_lock_row, text='', width=9, bg=bg).pack(side=tk.LEFT)   # allineamento
+        tk.Checkbutton(m_lock_row, text='fix slope', variable=self._sc_M_lock, bg=bg,
+                       font=('Consolas', 8)).pack(side=tk.LEFT, padx=(10, 0))
         self._sc_OFF = self._make_linked_row(ctrl, 'Offset',    -1.5,   1.5,   0.001,    '{:.3f}')
 
-        # Esponente P
-        p_row = tk.Frame(ctrl, bg=bg)
-        p_row.pack(fill=tk.X, pady=3)
-        tk.Label(p_row, text='P', width=9, anchor='w', bg=bg, font=('Consolas', 9)).pack(side=tk.LEFT)
-        self._var_P = tk.IntVar(value=2)
-        for p_val in (2, 3, 4):
-            tk.Radiobutton(p_row, text=str(p_val), variable=self._var_P, value=p_val,
-                           bg=bg, command=self._sc_aggiorna_preview).pack(side=tk.LEFT, padx=6)
+        # Esponente P: slider continuo + casella, con preset 1/2/3/4 e blocco "fix P"
+        self._sc_P = self._make_linked_row(ctrl, 'P', 1.0, 5.0, 0.01, '{:.2f}')
+        self._linked_set(self._sc_P, 2.0)
+        preset = tk.Frame(ctrl, bg=bg)
+        preset.pack(fill=tk.X, pady=(0, 3))
+        tk.Label(preset, text='', width=9, bg=bg).pack(side=tk.LEFT)   # allineamento
+        for p_val in (1, 2, 3, 4):
+            tk.Button(preset, text=str(p_val), width=2, font=('Consolas', 8),
+                      command=lambda v=p_val: self._linked_set(self._sc_P, float(v))).pack(side=tk.LEFT, padx=2)
+        self._sc_P_lock = tk.BooleanVar(value=False)
+        tk.Checkbutton(preset, text='fix P', variable=self._sc_P_lock, bg=bg,
+                       font=('Consolas', 8)).pack(side=tk.LEFT, padx=(10, 0))
 
         # Range label + pulsante Auto
         self._sc_range_label = tk.Label(self.f_scattering, text="Fit range: —",
@@ -348,8 +358,9 @@ class LabSpectrumManager:
         # Reset slider ai valori di default
         self._linked_set(self._sc_VS,  0.0)
         self._linked_set(self._sc_M,   0.0)
+        self._sc_M_lock.set(True)
         self._linked_set(self._sc_OFF, 0.0)
-        self._var_P.set(2)
+        self._linked_set(self._sc_P, 2.0)
         self._sc_label_nome.config(text=name)
 
         # Prepara grafico principale con le tre linee di anteprima
@@ -368,8 +379,9 @@ class LabSpectrumManager:
                                                color='green', lw=2, label=f'{name}_corr')
         self.ax.legend(fontsize=8)
 
-        # Linee verticali trascinabili per la finestra di fit
-        x_lo = self._sc_x.min() + 0.80 * (self._sc_x.max() - self._sc_x.min())
+        # Linee verticali trascinabili per la finestra di fit: di default coprono
+        # l'intero spettro (l'auto-fit vincolato è ormai robusto su tutta la banda)
+        x_lo = self._sc_x.min()
         x_hi = self._sc_x.max()
         self._sc_vline_lo = self.ax.axvline(x=x_lo, color='purple', ls='--', lw=1.5, alpha=0.8)
         self._sc_vline_hi = self.ax.axvline(x=x_hi, color='purple', ls='--', lw=1.5, alpha=0.8)
@@ -403,7 +415,7 @@ class LabSpectrumManager:
     def _sc_aggiorna_preview(self, *_):
         if self._sc_x is None or 'corr' not in self._sc_lines:
             return
-        VS, P, M, OFF = (self._sc_VS['value'].get(), self._var_P.get(),
+        VS, P, M, OFF = (self._sc_VS['value'].get(), self._sc_P['value'].get(),
                          self._sc_M['value'].get(), self._sc_OFF['value'].get())
         correction = VS * (self._sc_x / 1000.0) ** -P - M * self._sc_x + OFF
         y_corr = self._sc_y - correction
@@ -422,7 +434,10 @@ class LabSpectrumManager:
     def _sc_auto(self):
         if self._sc_x is None or self._sc_vline_lo is None:
             return
-        P = self._var_P.get()
+        P0 = float(self._sc_P['value'].get())
+        lock_P = self._sc_P_lock.get()
+        M0_fixed = float(self._sc_M['value'].get())
+        lock_M = self._sc_M_lock.get()
         x, y = self._sc_x, self._sc_y
         x_lo = self._sc_vline_lo.get_xdata()[0]
         x_hi = self._sc_vline_hi.get_xdata()[0]
@@ -433,58 +448,77 @@ class LabSpectrumManager:
             return
         x_ref, y_ref = x[mask], y[mask]
 
-        # Modello lineare: VS*(x/1000)^-P - M*x + OFF = y (fit sulla finestra)
+        # Fit lineare iniziale a P fisso: VS*(x/1000)^-P - M*x + OFF = y (sulla finestra)
         A_ref = np.column_stack([
-            (x_ref / 1000.0) ** -P,
+            (x_ref / 1000.0) ** -P0,
             -x_ref,
             np.ones_like(x_ref),
         ])
-        coeffs, _, _, _ = np.linalg.lstsq(A_ref, y_ref, rcond=None)
-        VS0, M0, OFF0 = float(max(coeffs[0], 0.0)), float(coeffs[1]), float(coeffs[2])
+        if lock_M:
+            coeffs, _, _, _ = np.linalg.lstsq(A_ref[:, [0, 2]], y_ref + M0_fixed * x_ref, rcond=None)
+            VS0, M0, OFF0 = float(max(coeffs[0], 0.0)), M0_fixed, float(coeffs[1])
+        else:
+            coeffs, _, _, _ = np.linalg.lstsq(A_ref, y_ref, rcond=None)
+            VS0, M0, OFF0 = float(max(coeffs[0], 0.0)), float(coeffs[1]), float(coeffs[2])
 
         # Punto di partenza ammissibile: abbassa l'offset finché la traccia è sotto lo spettro
-        corr_full = VS0 * (x / 1000.0) ** -P - M0 * x + OFF0
+        corr_full = VS0 * (x / 1000.0) ** -P0 - M0 * x + OFF0
         over = float(np.max(corr_full - y))
         if over > 0:
             OFF0 -= over
-        p = np.array([VS0, M0, OFF0], dtype=float)
 
-        # Rifinitura vincolata: varia VS, M e OFF insieme per il miglior fit nella
-        # finestra col vincolo (traccia ≤ spettro in ogni punto). Richiede scipy;
+        VS_fit, M_fit, OFF_fit, P_fit = VS0, M0, OFF0, P0
+        step = max(1, len(x) // 800)          # decima i vincoli (la traccia è liscia)
+        xc, yc = x[::step], y[::step]
+        # Scale per condizionare l'ottimizzazione (VS, M, x su ordini diversi)
+        s = np.maximum(np.abs(A_ref).max(axis=0), 1e-12)
+
+        # Rifinitura vincolata (traccia ≤ spettro in ogni punto). Richiede scipy;
         # senza scipy resta la soluzione ammissibile con solo l'offset abbassato.
+        # Se lo slope è fissato, il suo bound collassa a un punto (M0*s[1]) e SLSQP
+        # lo tiene bloccato pur restando nella stessa formulazione del fit libero
+        m_bound = (M0 * s[1], M0 * s[1]) if lock_M else (None, None)
+
         try:
             from scipy.optimize import minimize
-            step = max(1, len(x) // 800)          # decima i vincoli (la traccia è liscia)
-            xc, yc = x[::step], y[::step]
-            Ac = np.column_stack([(xc / 1000.0) ** -P, -xc, np.ones_like(xc)])
-
-            # Riscala le colonne (VS, M e la colonna x hanno ordini di grandezza
-            # molto diversi): senza questo l'ottimizzatore è mal condizionato
-            s = np.maximum(np.abs(A_ref).max(axis=0), 1e-12)
-            Ars, Acs = A_ref / s, Ac / s
-
-            def _f(q):
-                r = Ars @ q - y_ref
-                return float(r @ r)
-
-            def _fjac(q):
-                return 2.0 * Ars.T @ (Ars @ q - y_ref)
-
-            cons = [{'type': 'ineq',
-                     'fun': lambda q: yc - Acs @ q,
-                     'jac': lambda q: -Acs}]
-            res = minimize(_f, p * s, jac=_fjac, method='SLSQP',
-                           bounds=[(0.0, None), (None, None), (None, None)],
-                           constraints=cons, options={'maxiter': 500, 'ftol': 1e-12})
-            if np.all(np.isfinite(res.x)):
-                p = res.x / s
+            if lock_P:
+                # P fisso → modello lineare nei parametri: usa il jacobiano analitico
+                Ac = np.column_stack([(xc / 1000.0) ** -P0, -xc, np.ones_like(xc)])
+                Ars, Acs = A_ref / s, Ac / s
+                cons = [{'type': 'ineq',
+                         'fun': lambda q: yc - Acs @ q,
+                         'jac': lambda q: -Acs}]
+                res = minimize(lambda q: float((Ars @ q - y_ref) @ (Ars @ q - y_ref)),
+                               np.array([VS0, M0, OFF0]) * s,
+                               jac=lambda q: 2.0 * Ars.T @ (Ars @ q - y_ref),
+                               method='SLSQP',
+                               bounds=[(0.0, None), m_bound, (None, None)],
+                               constraints=cons, options={'maxiter': 500, 'ftol': 1e-12})
+                if np.all(np.isfinite(res.x)):
+                    VS_fit, M_fit, OFF_fit = (res.x / s)
+            else:
+                # P libero → modello non lineare: ottimizza anche l'esponente in [1, 5]
+                def corr(q, xx):
+                    vs, m, off, pp = q[0] / s[0], q[1] / s[1], q[2] / s[2], q[3]
+                    return vs * (xx / 1000.0) ** -pp - m * xx + off
+                cons = [{'type': 'ineq', 'fun': lambda q: yc - corr(q, xc)}]
+                q0 = np.array([VS0 * s[0], M0 * s[1], OFF0 * s[2], P0])
+                res = minimize(lambda q: float((corr(q, x_ref) - y_ref) @ (corr(q, x_ref) - y_ref)),
+                               q0, method='SLSQP',
+                               bounds=[(0.0, None), m_bound, (None, None), (1.0, 5.0)],
+                               constraints=cons, options={'maxiter': 800, 'ftol': 1e-12})
+                if np.all(np.isfinite(res.x)):
+                    VS_fit = res.x[0] / s[0]
+                    M_fit  = res.x[1] / s[1]
+                    OFF_fit = res.x[2] / s[2]
+                    P_fit  = float(res.x[3])
         except ImportError:
             pass
 
-        VS_fit, M_fit, OFF_fit = float(max(p[0], 0.0)), float(p[1]), float(p[2])
+        VS_fit = float(max(VS_fit, 0.0))
 
         # Garanzia finale su TUTTI i punti (il vincolo SLSQP era su griglia decimata)
-        corr_full = VS_fit * (x / 1000.0) ** -P - M_fit * x + OFF_fit
+        corr_full = VS_fit * (x / 1000.0) ** -P_fit - M_fit * x + OFF_fit
         over = float(np.max(corr_full - y))
         if over > 0:
             OFF_fit -= over
@@ -492,8 +526,11 @@ class LabSpectrumManager:
         # Usa i valori reali del fit (VS ≥ 0); se eccedono il range dello slider
         # la casella li mostra comunque e lo slider resta agganciato al massimo
         self._linked_set(self._sc_VS,  round(VS_fit, 6))
-        self._linked_set(self._sc_M,   round(M_fit, 8))
-        self._linked_set(self._sc_OFF, round(OFF_fit, 6))
+        self._linked_set(self._sc_OFF, round(float(OFF_fit), 6))
+        if not lock_M:
+            self._linked_set(self._sc_M, round(float(M_fit), 8))
+        if not lock_P:
+            self._linked_set(self._sc_P, round(P_fit, 3))
 
     # --- SCATTERING: drag delle linee verticali ---
     def _sc_aggiorna_range_label(self):
@@ -533,7 +570,7 @@ class LabSpectrumManager:
 
     # --- SCATTERING: applica e torna alla vista normale ---
     def _sc_applica(self):
-        VS, P, M, OFF = (self._sc_VS['value'].get(), self._var_P.get(),
+        VS, P, M, OFF = (self._sc_VS['value'].get(), self._sc_P['value'].get(),
                          self._sc_M['value'].get(), self._sc_OFF['value'].get())
         correction = VS * (self._sc_x / 1000.0) ** -P - M * self._sc_x + OFF
         y_corr   = self._sc_y - correction
