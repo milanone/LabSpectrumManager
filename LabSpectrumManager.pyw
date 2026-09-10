@@ -49,7 +49,17 @@ class LabSpectrumManager:
     def __init__(self, root):
         self.root = root
         self.root.title("Lab Spectrum Manager (UV-Vis + FTIR + Fluorescence)")
-        self.root.geometry("1500x900")
+        # Dimensione iniziale commisurata allo schermo (non un fisso 1500x900, che su
+        # schermi piccoli o con scaling elevato sporge sotto la taskbar): al più il
+        # 90% della larghezza e l'80% dell'altezza disponibili (l'80%, non l'85%, per
+        # lasciare margine alla barra delle applicazioni), finestra centrata.
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        win_w = min(1500, int(screen_w * 0.90))
+        win_h = min(900, int(screen_h * 0.80))
+        pos_x = (screen_w - win_w) // 2
+        pos_y = (screen_h - win_h) // 2
+        self.root.geometry(f"{win_w}x{win_h}+{pos_x}+{pos_y}")
 
         if origin_style is None:
             # avviso non bloccante: l'app funziona comunque (stile matplotlib di
@@ -68,6 +78,8 @@ class LabSpectrumManager:
         self._pe_module = None       # modulo plot_editor, caricato alla prima necessità
 
         self.spectra = {}
+        self._hidden_spectra = set()   # nomi nascosti dal grafico (restano in lista/tabella)
+        self._dirty = False   # True se ci sono risultati calcolati non ancora esportati
         self.v_line = None
         self.v_text = None
         self.current_dir = os.getcwd()
@@ -136,6 +148,17 @@ class LabSpectrumManager:
         self._dc_va     = None    # linea intervallo sinistra
         self._dc_vb     = None    # linea intervallo destra
         self._dc_drag   = None    # 'a' | 'b' | None
+        self._dc_drag_moved = False   # distingue un click fermo (→ aggiungi picco) da un drag reale
+
+        # Stato pannello trim (ritaglio di una porzione di spettro)
+        self._tr_name     = None
+        self._tr_x        = None
+        self._tr_y        = None
+        self._tr_lines    = {}
+        self._tr_vline_lo = None
+        self._tr_vline_hi = None
+        self._tr_drag     = None   # 'lo' | 'hi' | None
+        self._tr_cids     = []     # canvas connection IDs
 
         if HAS_DND:
             self.root.drop_target_register(DND_FILES)
@@ -149,9 +172,10 @@ class LabSpectrumManager:
         self.file_menu.add_command(label="Save Figure (pickle)", command=self.salva_figura_pickle)
         self.file_menu.add_command(label="Edit Figure...", command=self.apri_editor_figura)
         self.file_menu.add_separator()
-        self.file_menu.add_command(label="Exit", command=root.quit)
+        self.file_menu.add_command(label="Exit", command=self.on_exit)
         self.menu_bar.add_cascade(label="File", menu=self.file_menu)
         self.root.config(menu=self.menu_bar)
+        self.root.protocol("WM_DELETE_WINDOW", self.on_exit)
 
         self.paned = tk.PanedWindow(root, orient=tk.HORIZONTAL, sashrelief=tk.RAISED, sashwidth=4)
         self.paned.pack(fill=tk.BOTH, expand=True)
@@ -166,6 +190,11 @@ class LabSpectrumManager:
         # 2. CENTRO: Grafico
         self.f_plot = tk.Frame(self.paned)
         self.fig, self.ax = plt.subplots(figsize=(6, 6))
+        # Il margine superiore di default di matplotlib (12% dell'altezza) è pensato
+        # per un titolo del grafico che qui non è mai impostato: ridotto per non
+        # lasciare una fascia vuota sopra il grafico. Impostato una sola volta sulla
+        # figura condivisa: resta valido per tutti i pannelli (ax.clear() non lo tocca).
+        self.fig.subplots_adjust(top=0.96)
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.f_plot)
         self.toolbar = NavigationToolbar2Tk(self.canvas, self.f_plot, pack_toolbar=False)
         self.toolbar.pack(side=tk.TOP, fill=tk.X)
@@ -179,7 +208,11 @@ class LabSpectrumManager:
         plot_widget.bind('<Button-1>', lambda e: plot_widget.focus_set(), add='+')
         plot_widget.bind('<Control-v>', self._incolla_clipboard)
         plot_widget.bind('<Control-V>', self._incolla_clipboard)
-        plot_widget.bind('<Button-3>', self._menu_grafico)
+        # add='+' è essenziale: senza, questa bind sostituirebbe quella interna di
+        # FigureCanvasTk su <Button-3> (che genera il button_press_event di matplotlib),
+        # e il tasto destro smetterebbe di funzionare in deconvoluzione (e ovunque)
+        # tranne che con un doppio click, l'unico ancora instradato correttamente
+        plot_widget.bind('<Button-3>', self._menu_grafico, add='+')
         self.paned.add(self.f_plot, width=700)
 
         # 3. DESTRA: Gestione File
@@ -193,6 +226,11 @@ class LabSpectrumManager:
         btn_frame.pack(fill=tk.X, padx=10)
         tk.Button(btn_frame, text="Remove Selected", command=self.remove_selected).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
         tk.Button(btn_frame, text="Clear All", command=self.clear_all).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+
+        btn_frame_vis = tk.Frame(self.f_right, bg='#f0f4f7')
+        btn_frame_vis.pack(fill=tk.X, padx=10, pady=(2, 0))
+        tk.Button(btn_frame_vis, text="Hide Selected", command=self.hide_selected).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+        tk.Button(btn_frame_vis, text="Show Selected", command=self.show_selected).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
 
         btn_frame2 = tk.Frame(self.f_right, bg='#f0f4f7')
         btn_frame2.pack(fill=tk.X, padx=10, pady=(2, 0))
@@ -219,6 +257,9 @@ class LabSpectrumManager:
         tk.Button(self.f_right, text="Deconvolution",
                   command=self.apri_deconvoluzione,
                   bg='#b3e5fc', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(4, 0))
+        tk.Button(self.f_right, text="Trim",
+                  command=self.apri_trim,
+                  bg='#cfd8dc', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(4, 0))
 
         # --- PANNELLO METADATA (visibile per default) ---
         self.f_metadata = tk.Frame(self.f_right, bg='#f0f4f7')
@@ -261,6 +302,11 @@ class LabSpectrumManager:
         self.f_deconv = tk.Frame(self.f_right, bg='#f0f4f7')
         # non packed — appare solo quando attivato
         self._costruisci_pannello_deconv()
+
+        # --- PANNELLO TRIM (nascosto per default) ---
+        self.f_trim = tk.Frame(self.f_right, bg='#f0f4f7')
+        # non packed — appare solo quando attivato
+        self._costruisci_pannello_trim()
 
         self.paned.add(self.f_right, width=400)
 
@@ -636,6 +682,7 @@ class LabSpectrumManager:
             'df':   pd.DataFrame({'x': self._sc_x, new_name: y_corr}).set_index('x'),
             'info': new_info,
         }
+        self._dirty = True
         self._sc_chiudi_pannello()
         self.aggiorna_vista()
 
@@ -830,6 +877,7 @@ class LabSpectrumManager:
                 'Formula':   f"A − {k:.4f} × B",
             }
         }
+        self._dirty = True
         self._sub_chiudi_pannello()
         self.aggiorna_vista()
 
@@ -1066,6 +1114,7 @@ class LabSpectrumManager:
                     'Norm value': f"{val:.6f}",
                 }
             }
+            self._dirty = True
         self._norm_chiudi_pannello()
         self.aggiorna_vista()
 
@@ -1273,6 +1322,7 @@ class LabSpectrumManager:
             'df':   pd.DataFrame({final_name: corr}, index=self.spectra[self._bl_name]['df'].index),
             'info': new_info,
         }
+        self._dirty = True
         self._bl_chiudi_pannello()
         self.aggiorna_vista()
 
@@ -1472,6 +1522,7 @@ class LabSpectrumManager:
             'df':   pd.DataFrame({final_name: corr}, index=self.spectra[self._ab_name]['df'].index),
             'info': new_info,
         }
+        self._dirty = True
         self._ab_chiudi_pannello()
         self.aggiorna_vista()
 
@@ -1653,6 +1704,7 @@ class LabSpectrumManager:
             'df':   pd.DataFrame({final_name: smoothed}, index=self.spectra[self._sm_name]['df'].index),
             'info': new_info,
         }
+        self._dirty = True
         self._sm_chiudi_pannello()
         self.aggiorna_vista()
 
@@ -1703,9 +1755,37 @@ class LabSpectrumManager:
                                        wraplength=360, justify='left')
         self._dc_label_nome.pack(padx=10)
 
+        # Modalità aggiunta/rimozione picchi: un tasto dedicato invece di un click
+        # sempre "armato", così si può guardare/zoomare il grafico senza piazzare
+        # picchi per sbaglio, ed è un punto naturale per sbloccare pan/zoom della
+        # toolbar se erano rimasti attivi (altrimenti il click risulta silenziosamente
+        # ignorato e sembra che "non succeda nulla").
+        self._dc_add_mode = tk.BooleanVar(value=True)
+        tk.Checkbutton(self.f_deconv, text="✏ Add/remove peaks (click on the graph)",
+                       variable=self._dc_add_mode, bg=bg, font=('Consolas', 9),
+                       command=self._dc_disattiva_toolbar_mode).pack(padx=10, pady=(4, 0), anchor='w')
         tk.Label(self.f_deconv,
-                 text="Clic sinistro sul grafico: aggiungi picco\nClic destro: rimuovi il picco più vicino",
-                 font=('Consolas', 8), bg=bg, fg='#555555', justify='left').pack(padx=10, pady=(4, 2))
+                 text="Left click: add peak   •   Right click: remove nearest",
+                 font=('Consolas', 8), bg=bg, fg='#555555', justify='left').pack(padx=10, pady=(0, 2))
+
+        # Zona di interesse per il fit: due linee trascinabili sul grafico,
+        # oppure inserimento diretto dei valori (stesso pattern del pannello Trim)
+        tk.Label(self.f_deconv, text="Fit range:",
+                 font=('Consolas', 8), bg=bg, fg='#555555', justify='left').pack(padx=10, anchor='w')
+        dc_range_row = tk.Frame(self.f_deconv, bg=bg)
+        dc_range_row.pack(padx=10, pady=(2, 0))
+        tk.Label(dc_range_row, text="From", bg=bg, font=('Consolas', 9)).pack(side=tk.LEFT)
+        self._dc_entry_lo = tk.Entry(dc_range_row, width=9, font=('Consolas', 9), justify='center')
+        self._dc_entry_lo.pack(side=tk.LEFT, padx=(4, 12))
+        tk.Label(dc_range_row, text="To", bg=bg, font=('Consolas', 9)).pack(side=tk.LEFT)
+        self._dc_entry_hi = tk.Entry(dc_range_row, width=9, font=('Consolas', 9), justify='center')
+        self._dc_entry_hi.pack(side=tk.LEFT, padx=(4, 0))
+        for entry in (self._dc_entry_lo, self._dc_entry_hi):
+            entry.bind('<Return>', self._dc_entry_commit)
+            entry.bind('<FocusOut>', self._dc_entry_commit)
+        self._dc_range_label = tk.Label(self.f_deconv, text="—",
+                                        font=('Consolas', 8), bg=bg, fg='#555555')
+        self._dc_range_label.pack(pady=(2, 0))
 
         # Profilo di forma
         shape_row = tk.Frame(self.f_deconv, bg=bg)
@@ -1753,7 +1833,10 @@ class LabSpectrumManager:
         self._dc_fitted = False
         self._dc_range  = [float(self._dc_x.min()), float(self._dc_x.max())]
         self._dc_drag   = None
+        self._dc_drag_moved = False
+        self._dc_add_mode.set(True)
         self._dc_label_nome.config(text=name)
+        self._dc_disattiva_toolbar_mode()   # pan/zoom rimasto attivo da un altro pannello bloccherebbe i click
 
         self._dc_cids = [
             self.canvas.mpl_connect('button_press_event',   self._dc_press),
@@ -1766,28 +1849,47 @@ class LabSpectrumManager:
         self.f_deconv.pack(fill=tk.BOTH, expand=True)
 
     # --- DECONVOLUZIONE: gestione mouse (linee intervallo + picchi) ---
+    def _dc_disattiva_toolbar_mode(self):
+        """Spegne pan/zoom della toolbar se attivi: altrimenti il primo click sul grafico
+        viene ignorato in silenzio (matplotlib lo intercetta per il pan/zoom) e sembra che
+        il click 'non faccia nulla' — capita spesso dopo aver usato lo zoom per ispezionare
+        lo spettro prima di piazzare i picchi."""
+        mode = getattr(self.toolbar.mode, 'value', self.toolbar.mode)
+        if mode == 'pan/zoom':
+            self.toolbar.pan()
+        elif mode == 'zoom rect':
+            self.toolbar.zoom()
+
+    def _dc_aggiungi_picco(self, x0):
+        x0 = float(x0)
+        idx = int(np.argmin(np.abs(self._dc_x - x0)))
+        A = max(float(self._dc_y[idx]) - self._dc_offset, 1e-6)
+        w = (self._dc_x.max() - self._dc_x.min()) * 0.02
+        self._dc_peaks.append({'x0': x0, 'A': A, 'w': w, 'eta': self._dc_eta_default()})
+        self._dc_fitted = False
+        self._dc_ridisegna()
+
     def _dc_press(self, event):
         if event.inaxes != self.ax or event.xdata is None:
             return
         if self.toolbar.mode:        # ignora se zoom/pan attivo
             return
-        # Priorità: se vicino a una linea dell'intervallo, inizia il trascinamento
+        # Priorità: se vicino a una linea dell'intervallo, inizia il trascinamento (ma se il
+        # mouse non si sposta prima del rilascio, _dc_drag_stop lo tratta come un click e
+        # aggiunge comunque un picco lì — altrimenti un peak vicino al bordo del range,
+        # ora esteso di default a tutto lo spettro, non sarebbe mai selezionabile)
         if event.button == 1:
             for key, line in [('a', self._dc_va), ('b', self._dc_vb)]:
                 if line is not None:
                     x_disp = self.ax.transData.transform((line.get_xdata()[0], 0))[0]
                     if abs(event.x - x_disp) < 8:
                         self._dc_drag = key
+                        self._dc_drag_moved = False
                         return
-            # altrimenti aggiungi un picco
-            x0 = float(event.xdata)
-            idx = int(np.argmin(np.abs(self._dc_x - x0)))
-            A = max(float(self._dc_y[idx]) - self._dc_offset, 1e-6)
-            w = (self._dc_x.max() - self._dc_x.min()) * 0.02
-            self._dc_peaks.append({'x0': x0, 'A': A, 'w': w, 'eta': self._dc_eta_default()})
-            self._dc_fitted = False
-            self._dc_ridisegna()
-        elif event.button == 3 and self._dc_peaks:
+            # altrimenti aggiungi un picco (se la modalità è attiva)
+            if self._dc_add_mode.get():
+                self._dc_aggiungi_picco(event.xdata)
+        elif event.button == 3 and self._dc_peaks and self._dc_add_mode.get():
             centers = np.array([pk['x0'] for pk in self._dc_peaks])
             i = int(np.argmin(np.abs(centers - event.xdata)))
             del self._dc_peaks[i]
@@ -1797,17 +1899,66 @@ class LabSpectrumManager:
     def _dc_drag_move(self, event):
         if self._dc_drag is None or event.inaxes != self.ax or event.xdata is None:
             return
-        xv = float(event.xdata)
+        xv = self._dc_snap(event.xdata)
+        lo, hi = min(self._dc_range), max(self._dc_range)
         if self._dc_drag == 'a':
+            if xv >= hi:
+                return
             self._dc_range[0] = xv
             self._dc_va.set_xdata([xv, xv])
         else:
+            if xv <= lo:
+                return
             self._dc_range[1] = xv
             self._dc_vb.set_xdata([xv, xv])
+        self._dc_drag_moved = True
+        self._dc_aggiorna_range_label()
         self.canvas.draw_idle()
 
     def _dc_drag_stop(self, event):
+        # Click fermo vicino a una linea (nessun trascinamento effettivo): trattalo come
+        # un normale click per aggiungere un picco, invece di non fare nulla.
+        if (self._dc_drag is not None and not self._dc_drag_moved and self._dc_add_mode.get()
+                and event is not None and event.inaxes == self.ax and event.xdata is not None):
+            self._dc_aggiungi_picco(event.xdata)
         self._dc_drag = None
+        self._dc_drag_moved = False
+
+    def _dc_snap(self, xv):
+        """Aggancia un valore x al punto dati più vicino (come nel pannello Trim):
+        la zona di interesse per il fit cade sempre su un campione reale."""
+        idx = int(np.argmin(np.abs(self._dc_x - xv)))
+        return float(self._dc_x[idx])
+
+    def _dc_aggiorna_range_label(self):
+        if self._dc_range is None:
+            return
+        lo, hi = min(self._dc_range), max(self._dc_range)
+        for entry, val in ((self._dc_entry_lo, lo), (self._dc_entry_hi, hi)):
+            entry.delete(0, tk.END)
+            entry.insert(0, f"{val:.4g}")
+        n = int(np.sum((self._dc_x >= lo) & (self._dc_x <= hi)))
+        self._dc_range_label.config(text=f"{n} points in fit range")
+
+    # --- DECONVOLUZIONE: inserimento diretto della zona di interesse da tastiera ---
+    def _dc_entry_commit(self, event=None):
+        if self._dc_range is None:
+            return
+        try:
+            lo_val = float(self._dc_entry_lo.get())
+            hi_val = float(self._dc_entry_hi.get())
+        except ValueError:
+            self._dc_aggiorna_range_label()   # testo non numerico: ripristina i valori correnti
+            return
+        lo_val, hi_val = self._dc_snap(min(lo_val, hi_val)), self._dc_snap(max(lo_val, hi_val))
+        if lo_val == hi_val:
+            idx = int(np.argmin(np.abs(self._dc_x - lo_val)))
+            if idx < len(self._dc_x) - 1:
+                hi_val = float(self._dc_x[idx + 1])
+            elif idx > 0:
+                lo_val = float(self._dc_x[idx - 1])
+        self._dc_range = [lo_val, hi_val]
+        self._dc_ridisegna()
 
     def _dc_eta_default(self):
         return {'lorentz': 1.0, 'gauss': 0.0, 'pv': 0.5}[self._dc_shape.get()]
@@ -1917,6 +2068,12 @@ class LabSpectrumManager:
 
         self.ax.plot(x, y, color='steelblue', alpha=0.5, lw=1.5, label=f'{self._dc_name}')
 
+        # Il fit (somma e componenti) viene disegnato solo dentro la zona di interesse:
+        # è lì che curve_fit ottimizza i parametri, fuori da quella finestra la curva non
+        # ha significato ed estenderla a tutto lo spettro sarebbe fuorviante.
+        lo_r, hi_r = min(self._dc_range), max(self._dc_range)
+        mask = (x >= lo_r) & (x <= hi_r)
+
         total = np.full_like(x, self._dc_offset, dtype=float)
         colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
         righe = []
@@ -1925,7 +2082,7 @@ class LabSpectrumManager:
             comp = self._pseudovoigt(x, pk['A'], pk['x0'], pk['w'], eta)
             total = total + comp
             # Componente = profilo puro (sempre ≥ 0), disegnato da zero
-            self.ax.plot(x, comp, color=colors[i % len(colors)],
+            self.ax.plot(x[mask], comp[mask], color=colors[i % len(colors)],
                          lw=1.0, ls='--', alpha=0.8)
             self.ax.axvline(pk['x0'], color=colors[i % len(colors)], lw=0.6, alpha=0.4)
             area = self._pv_area(pk['A'], pk['w'], eta)
@@ -1933,21 +2090,20 @@ class LabSpectrumManager:
             righe.append(f"P{i+1}: x0={pk['x0']:.1f}  FWHM={pk['w']:.1f}  A={pk['A']:.3f}  area={area:.2f}{eta_txt}")
 
         if self._dc_peaks:
-            self.ax.plot(x, total, color='red', lw=1.8,
+            self.ax.plot(x[mask], total[mask], color='red', lw=1.8,
                          label='fit' if self._dc_fitted else 'guess')
 
         if self._dc_peaks and self._dc_fitted:
-            lo_r, hi_r = min(self._dc_range), max(self._dc_range)
-            m = (x >= lo_r) & (x <= hi_r)
-            ss_res = np.sum((y[m] - total[m]) ** 2)
-            ss_tot = np.sum((y[m] - y[m].mean()) ** 2)
+            ss_res = np.sum((y[mask] - total[mask]) ** 2)
+            ss_tot = np.sum((y[mask] - y[mask].mean()) ** 2)
             r2 = 1 - ss_res / ss_tot if ss_tot else 0.0
             righe.append(f"offset={self._dc_offset:.3f}   R²={r2:.4f}")
 
-        # Linee dell'intervallo di fit (trascinabili)
+        # Linee dell'intervallo di fit (trascinabili, o inseribile da tastiera)
         lo_r, hi_r = self._dc_range
         self._dc_va = self.ax.axvline(lo_r, color='purple', ls='--', lw=1.5, alpha=0.8)
         self._dc_vb = self.ax.axvline(hi_r, color='purple', ls='--', lw=1.5, alpha=0.8)
+        self._dc_aggiorna_range_label()
 
         self.ax.legend(fontsize=8)
         if tipo == 'FTIR':
@@ -2013,6 +2169,7 @@ class LabSpectrumManager:
                 extra['eta (L/G)'] = f"{eta:.3f}"
             salva(f'L{i+1}', comp, extra)
 
+        self._dirty = True
         self._dc_chiudi_pannello()
         self.aggiorna_vista()
 
@@ -2038,11 +2195,233 @@ class LabSpectrumManager:
         self.f_deconv.pack_forget()
         self.f_metadata.pack(fill=tk.BOTH, expand=True)
 
+    # --- PANNELLO TRIM: costruzione widget (una sola volta) ---
+    def _costruisci_pannello_trim(self):
+        bg = '#f0f4f7'
+
+        tk.Label(self.f_trim, text="TRIM SPECTRUM",
+                 font=('Arial', 10, 'bold'), bg=bg).pack(pady=(15, 2))
+        self._tr_label_nome = tk.Label(self.f_trim, text="", font=('Consolas', 9, 'italic'), bg=bg)
+        self._tr_label_nome.pack()
+
+        tk.Label(self.f_trim,
+                 text="Drag the two vertical lines, or type the\nstart/end values directly (Enter to confirm).",
+                 font=('Consolas', 8), bg=bg, fg='#555555', justify='left').pack(padx=10, pady=(6, 2))
+
+        range_row = tk.Frame(self.f_trim, bg=bg)
+        range_row.pack(padx=10, pady=(4, 0))
+        tk.Label(range_row, text="From", bg=bg, font=('Consolas', 9)).pack(side=tk.LEFT)
+        self._tr_entry_lo = tk.Entry(range_row, width=9, font=('Consolas', 9), justify='center')
+        self._tr_entry_lo.pack(side=tk.LEFT, padx=(4, 12))
+        tk.Label(range_row, text="To", bg=bg, font=('Consolas', 9)).pack(side=tk.LEFT)
+        self._tr_entry_hi = tk.Entry(range_row, width=9, font=('Consolas', 9), justify='center')
+        self._tr_entry_hi.pack(side=tk.LEFT, padx=(4, 0))
+        for entry in (self._tr_entry_lo, self._tr_entry_hi):
+            entry.bind('<Return>', self._tr_entry_commit)
+            entry.bind('<FocusOut>', self._tr_entry_commit)
+
+        self._tr_range_label = tk.Label(self.f_trim, text="—",
+                                        font=('Consolas', 8), bg=bg, fg='#555555')
+        self._tr_range_label.pack(pady=(4, 0))
+
+        btn = tk.Frame(self.f_trim, bg=bg)
+        btn.pack(fill=tk.X, padx=10, pady=10)
+        tk.Button(btn, text="Apply", command=self._tr_applica,
+                  bg='#2ecc71', fg='white', font=('Arial', 9, 'bold')).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+        tk.Button(btn, text="Cancel", command=self._tr_annulla).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+
+    # --- TRIM: apertura pannello ---
+    def apri_trim(self):
+        sel = self._selezione_effettiva()
+        if len(sel) != 1:
+            messagebox.showwarning("Trim", "Seleziona esattamente uno spettro.")
+            return
+        name = self.file_listbox.get(sel[0])
+        df = self.spectra[name]['df']
+        self._tr_name = name
+        self._tr_x = df.index.to_numpy(dtype=float)
+        self._tr_y = df[name].to_numpy(dtype=float)
+        self._tr_label_nome.config(text=name)
+
+        self.ax.clear()
+        self.v_line = self.v_text = None
+        tipo = self.spectra[name]['info']['Type']
+        if tipo == 'FTIR':
+            self.ax.set_xlabel("Wavenumber (cm⁻¹)")
+            self.ax.set_ylabel(self._ftir_ylabel([name]))
+        elif tipo == 'Raman':
+            self.ax.set_xlabel("Raman shift (cm⁻¹)")
+            self.ax.set_ylabel("Intensity (A.U.)")
+        elif tipo == 'Fluorescence':
+            self.ax.set_xlabel("Wavelength (nm)")
+            self.ax.set_ylabel("Intensity (A.U.)")
+        else:
+            self.ax.set_xlabel("Wavelength (nm)")
+            self.ax.set_ylabel("Absorbance (A)")
+        self.ax.grid(True, linestyle=':', alpha=0.6)
+
+        self._tr_lines['orig'], = self.ax.plot(self._tr_x, self._tr_y,
+                                               color='steelblue', alpha=0.4, lw=1.2, label=f'{name} (orig)')
+        self._tr_lines['sel'],  = self.ax.plot(self._tr_x, self._tr_y.copy(),
+                                               color='green', lw=1.8, label=f'{name}_trim')
+        self.ax.legend(fontsize=8)
+        if tipo == 'FTIR':
+            self.ax.invert_xaxis()
+
+        x_lo, x_hi = float(self._tr_x.min()), float(self._tr_x.max())
+        self._tr_vline_lo = self.ax.axvline(x=x_lo, color='purple', ls='--', lw=1.5, alpha=0.8)
+        self._tr_vline_hi = self.ax.axvline(x=x_hi, color='purple', ls='--', lw=1.5, alpha=0.8)
+        self._tr_drag = None
+        self._tr_cids = [
+            self.canvas.mpl_connect('button_press_event',   self._tr_drag_start),
+            self.canvas.mpl_connect('motion_notify_event',  self._tr_drag_move),
+            self.canvas.mpl_connect('button_release_event', self._tr_drag_stop),
+        ]
+        self._tr_aggiorna_range_label()
+        self._tr_aggiorna_preview()
+        self.canvas.draw()
+
+        self.f_metadata.pack_forget()
+        self.f_trim.pack(fill=tk.BOTH, expand=True)
+
+    # --- TRIM: preview live (evidenzia in verde solo la porzione selezionata) ---
+    def _tr_aggiorna_preview(self, *_):
+        if self._tr_x is None or 'sel' not in self._tr_lines:
+            return
+        lo = self._tr_vline_lo.get_xdata()[0]
+        hi = self._tr_vline_hi.get_xdata()[0]
+        lo, hi = min(lo, hi), max(lo, hi)
+        y_sel = np.where((self._tr_x >= lo) & (self._tr_x <= hi), self._tr_y, np.nan)
+        self._tr_lines['sel'].set_ydata(y_sel)
+        self.canvas.draw_idle()
+
+    def _tr_aggiorna_range_label(self):
+        if self._tr_vline_lo is None:
+            return
+        lo = self._tr_vline_lo.get_xdata()[0]
+        hi = self._tr_vline_hi.get_xdata()[0]
+        lo, hi = min(lo, hi), max(lo, hi)
+        for entry, val in ((self._tr_entry_lo, lo), (self._tr_entry_hi, hi)):
+            entry.delete(0, tk.END)
+            entry.insert(0, f"{val:.4g}")
+        n = int(np.sum((self._tr_x >= lo) & (self._tr_x <= hi)))
+        self._tr_range_label.config(text=f"{n} points selected")
+
+    def _tr_snap(self, xv):
+        """Aggancia un valore x al punto dati più vicino: i limiti del trim cadono
+        sempre su un campione reale dello spettro, mai su un valore interpolato."""
+        idx = int(np.argmin(np.abs(self._tr_x - xv)))
+        return float(self._tr_x[idx])
+
+    # --- TRIM: inserimento diretto del range da tastiera ---
+    def _tr_entry_commit(self, event=None):
+        if self._tr_x is None:
+            return
+        try:
+            lo_val = float(self._tr_entry_lo.get())
+            hi_val = float(self._tr_entry_hi.get())
+        except ValueError:
+            self._tr_aggiorna_range_label()   # testo non numerico: ripristina i valori correnti
+            return
+        lo_val, hi_val = self._tr_snap(min(lo_val, hi_val)), self._tr_snap(max(lo_val, hi_val))
+        if lo_val == hi_val:
+            idx = int(np.argmin(np.abs(self._tr_x - lo_val)))
+            if idx < len(self._tr_x) - 1:
+                hi_val = float(self._tr_x[idx + 1])
+            elif idx > 0:
+                lo_val = float(self._tr_x[idx - 1])
+        self._tr_vline_lo.set_xdata([lo_val, lo_val])
+        self._tr_vline_hi.set_xdata([hi_val, hi_val])
+        self._tr_aggiorna_range_label()
+        self._tr_aggiorna_preview()
+        self.canvas.draw_idle()
+
+    # --- TRIM: drag delle linee verticali (agganciate al passo reale dei dati) ---
+    def _tr_drag_start(self, event):
+        if event.inaxes != self.ax or event.button != 1:
+            return
+        for key, line in [('lo', self._tr_vline_lo), ('hi', self._tr_vline_hi)]:
+            x_disp = self.ax.transData.transform((line.get_xdata()[0], 0))[0]
+            if abs(event.x - x_disp) < 8:
+                self._tr_drag = key
+                return
+
+    def _tr_drag_move(self, event):
+        if self._tr_drag is None or event.inaxes != self.ax or event.xdata is None:
+            return
+        xv = self._tr_snap(event.xdata)
+        lo = self._tr_vline_lo.get_xdata()[0]
+        hi = self._tr_vline_hi.get_xdata()[0]
+        if self._tr_drag == 'lo':
+            if xv >= hi:
+                return
+            self._tr_vline_lo.set_xdata([xv, xv])
+        else:
+            if xv <= lo:
+                return
+            self._tr_vline_hi.set_xdata([xv, xv])
+        self._tr_aggiorna_range_label()
+        self._tr_aggiorna_preview()
+        self.canvas.draw_idle()
+
+    def _tr_drag_stop(self, event):
+        self._tr_drag = None
+
+    # --- TRIM: applica (crea una nuova traccia con la sola porzione selezionata) ---
+    def _tr_applica(self):
+        lo = self._tr_vline_lo.get_xdata()[0]
+        hi = self._tr_vline_hi.get_xdata()[0]
+        lo, hi = min(lo, hi), max(lo, hi)
+        mask = (self._tr_x >= lo) & (self._tr_x <= hi)
+        if mask.sum() < 2:
+            messagebox.showwarning("Trim", "La selezione contiene meno di 2 punti.")
+            return
+        new_name = f"{self._tr_name}_trim"
+        final_name = new_name
+        counter = 2
+        while final_name in self.spectra:
+            final_name = f"{new_name}_{counter}"
+            counter += 1
+        new_info = dict(self.spectra[self._tr_name]['info'])
+        new_info['Sample']       = final_name
+        new_info['Derived from'] = self._tr_name
+        new_info['Operation']    = 'Trim'
+        new_info['Trim Range']   = f"{lo:.2f} – {hi:.2f}"
+        orig_index = self.spectra[self._tr_name]['df'].index
+        self.spectra[final_name] = {
+            'df':   pd.DataFrame({final_name: self._tr_y[mask]}, index=orig_index[mask]),
+            'info': new_info,
+        }
+        self._dirty = True
+        self._tr_chiudi_pannello()
+        self.aggiorna_vista()
+
+    # --- TRIM: annulla senza modifiche ---
+    def _tr_annulla(self):
+        self._tr_chiudi_pannello()
+        self.aggiorna_vista()
+
+    # --- TRIM: chiude il pannello e ripristina metadata ---
+    def _tr_chiudi_pannello(self):
+        for cid in self._tr_cids:
+            self.canvas.mpl_disconnect(cid)
+        self._tr_cids     = []
+        self._tr_drag     = None
+        self._tr_vline_lo = None
+        self._tr_vline_hi = None
+        self._tr_name     = None
+        self._tr_x        = None
+        self._tr_y        = None
+        self._tr_lines    = {}
+        self.f_trim.pack_forget()
+        self.f_metadata.pack(fill=tk.BOTH, expand=True)
+
     # --- CURSORE ---
     def _cursor_panel_attivo(self):
         return (self._sc_name is not None or self._sub_name_a is not None or self._norm_names
                 or self._bl_name is not None or self._ab_name is not None
-                or self._sm_name is not None or self._dc_name is not None)
+                or self._sm_name is not None or self._dc_name is not None
+                or self._tr_name is not None)
 
     def _cursor_best_position(self):
         """Sceglie l'angolo del grafico con minor densità di punti tracciati nelle
@@ -2251,6 +2630,7 @@ class LabSpectrumManager:
             'df':   pd.DataFrame({final: y}, index=x),
             'info': info,
         }
+        self._dirty = True   # incollato dalla clipboard: non esiste su disco, perderlo sarebbe definitivo
         self.aggiorna_vista()
 
     def processa_file(self, path):
@@ -2720,13 +3100,21 @@ class LabSpectrumManager:
             self.canvas.draw()
             return
 
-        for sname in self.spectra.keys():
+        for idx, sname in enumerate(self.spectra.keys()):
             self.file_listbox.insert(tk.END, sname)
+            if sname in self._hidden_spectra:
+                self.file_listbox.itemconfig(idx, fg='#aaaaaa')
 
-        # Cache array numpy per il cursore (evita overhead pandas a ogni mouse move)
+        # Con un solo spettro caricato, selezionalo subito: evita di dover cliccare
+        # sull'unica voce prima di usare i pulsanti che richiedono una selezione.
+        if len(self.spectra) == 1:
+            self.file_listbox.selection_set(0)
+
+        # Cache array numpy per il cursore (evita overhead pandas a ogni mouse move);
+        # gli spettri nascosti non compaiono nel grafico quindi neanche nel cursore.
         self._cursor_data = [
             (name, d['df'].index.to_numpy(dtype=float), d['df'][name].to_numpy(dtype=float))
-            for name, d in self.spectra.items()
+            for name, d in self.spectra.items() if name not in self._hidden_spectra
         ]
 
         master_df = pd.concat([s['df'] for s in self.spectra.values()], axis=1).sort_index()
@@ -2745,11 +3133,16 @@ class LabSpectrumManager:
         table_df.index.name = x_index_label
         self.data_box.insert(tk.END, table_df.round(4).to_csv(sep='\t', lineterminator='\n'))
 
-        for col in master_df.columns:
+        visible_cols = [c for c in master_df.columns if c not in self._hidden_spectra]
+        for col in visible_cols:
             valid = master_df[col].dropna()
             self.ax.plot(valid.index, valid.values, label=col, lw=1.5)
 
-        self.ax.set_xlim(master_df.index.min(), master_df.index.max())
+        if visible_cols:
+            self.ax.set_xlim(min(self.spectra[c]['df'].index.min() for c in visible_cols),
+                             max(self.spectra[c]['df'].index.max() for c in visible_cols))
+        else:
+            self.ax.set_xlim(master_df.index.min(), master_df.index.max())
 
         if 'FTIR' in types:
             self.ax.set_xlabel("Wavenumber (cm⁻¹)")
@@ -2765,7 +3158,8 @@ class LabSpectrumManager:
             self.ax.set_xlabel("Wavelength (nm)")
             self.ax.set_ylabel("Absorbance (A)")
 
-        self.ax.legend(fontsize='8', loc='best')
+        if visible_cols:
+            self.ax.legend(fontsize='8', loc='best')
         self.ax.grid(True, linestyle=':', alpha=0.6)
         self.canvas.draw()
 
@@ -2818,6 +3212,7 @@ class LabSpectrumManager:
                 'Source':      ', '.join(names),
             }
         }
+        self._dirty = True
         self.aggiorna_vista()
 
     # --- CONTEXT MENU LISTBOX ---
@@ -2837,7 +3232,20 @@ class LabSpectrumManager:
             else f"Copy {len(names)} spectra for Origin"
         menu.add_command(label=etichetta,
                          command=lambda: self._copia_origin(names))
+        menu.add_separator()
+        menu.add_command(label="Hide" if len(names) == 1 else f"Hide {len(names)} spectra",
+                         command=lambda: self._nascondi_spettri(names))
+        menu.add_command(label="Show" if len(names) == 1 else f"Show {len(names)} spectra",
+                         command=lambda: self._mostra_spettri(names))
         menu.tk_popup(event.x_root, event.y_root)
+
+    def _nascondi_spettri(self, names):
+        self._hidden_spectra.update(names)
+        self.aggiorna_vista()
+
+    def _mostra_spettri(self, names):
+        self._hidden_spectra.difference_update(names)
+        self.aggiorna_vista()
 
     def _copia_xy_clipboard(self, name):
         df = self.spectra[name]['df']
@@ -2918,6 +3326,8 @@ class LabSpectrumManager:
             return "Smoothing"
         if self._dc_name is not None:
             return "Deconvolution"
+        if self._tr_name is not None:
+            return "Trim"
         return None
 
     def remove_selected(self):
@@ -2929,6 +3339,7 @@ class LabSpectrumManager:
         for i in reversed(selected):
             name = self.file_listbox.get(i)
             if name in self.spectra: del self.spectra[name]
+            self._hidden_spectra.discard(name)
         self.aggiorna_vista()
 
     def clear_all(self):
@@ -2937,6 +3348,25 @@ class LabSpectrumManager:
             messagebox.showwarning("Clear All", f"Chiudi prima il pannello {pannello} (Apply o Cancel).")
             return
         self.spectra = {}
+        self._hidden_spectra = set()
+        self._dirty = False
+        self.aggiorna_vista()
+
+    # --- MOSTRA/NASCONDI: escludono uno spettro dal grafico senza rimuoverlo ---
+    def hide_selected(self):
+        sel = self.file_listbox.curselection()
+        if not sel:
+            return
+        for i in sel:
+            self._hidden_spectra.add(self.file_listbox.get(i))
+        self.aggiorna_vista()
+
+    def show_selected(self):
+        sel = self.file_listbox.curselection()
+        if not sel:
+            return
+        for i in sel:
+            self._hidden_spectra.discard(self.file_listbox.get(i))
         self.aggiorna_vista()
 
     def esporta_csv(self):
@@ -2945,6 +3375,16 @@ class LabSpectrumManager:
         if path:
             dfs = [s['df'] for s in self.spectra.values()]
             pd.concat(dfs, axis=1).round(4).to_csv(path)
+            self._dirty = False
+
+    def on_exit(self):
+        """Chiude l'app, avvisando se ci sono risultati calcolati (scattering, fit,
+        medie, trim, ...) non ancora esportati con 'Export CSV'."""
+        if self._dirty and not messagebox.askyesno(
+                "Exit",
+                "You have unsaved calculated results (not exported via Export CSV). Exit anyway?"):
+            return
+        self.root.destroy()
 
     def _pulisci_cursore(self):
         """Rimuove l'overlay interattivo del cursore (linea verticale + testo) dagli

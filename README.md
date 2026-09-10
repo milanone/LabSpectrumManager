@@ -42,6 +42,12 @@ Matplotlib graph with an interactive crosshair cursor in the center, and a list 
 (multi-select) with metadata on the right. The X/Y readout that follows the cursor picks its
 corner automatically to avoid the plotted curves, and can be dragged anywhere on the graph.
 
+Any spectrum can be hidden from the graph (Hide Selected / Show Selected, or right-click in the
+list) without removing it — it stays in the list (greyed out), data table and metadata, just off
+the plot. Closing the app (window close button or `File → Exit`) asks for confirmation if there
+are calculated results — averages, fits, corrections, trims, pasted data — that haven't been
+exported yet with `File → Export CSV`.
+
 `File → Save Figure (pickle)` saves the current graph as a live, re-editable `Figure` object
 (not a raster image); `File → Edit Figure...` opens it directly in PlotStyleKit's figure editor
 for titles, axis labels, per-line styling, legend placement and publication-size PNG/SVG/PDF
@@ -64,7 +70,11 @@ export — see Dependencies.
 - **Smoothing** — repeated moving average (boxcar, ~Gaussian) or Savitzky-Golay filter (local
   polynomial fit, better preserves peak height and shape).
 - **Deconvolution** — interactive multi-peak fit (click to add/remove a peak) with a
-  Lorentzian, Gaussian or pseudo-Voigt profile.
+  Lorentzian, Gaussian or pseudo-Voigt profile; the fit is restricted to a window settable by
+  dragging its two boundary lines or typing exact values, same as Trim below.
+- **Trim** — crops a spectrum to a window (drag the two vertical lines, or type exact start/end
+  values) and stores the selected portion as a new, independent spectrum, leaving the source
+  trace untouched; the window edges always snap to a real data point.
 
 ## Structure
 

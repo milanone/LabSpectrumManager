@@ -54,7 +54,7 @@ Loaded spectra are stored in `self.spectra` (dict):
 |-------|----------|
 | Left (400px) | Data table — merged spectra as tab-separated text |
 | Center (700px) | Matplotlib graph with interactive cursor overlay |
-| Right (400px) | Spectrum listbox (multi-select), remove/clear buttons, metadata display |
+| Right (400px) | Spectrum listbox (multi-select), remove/clear/hide/show buttons, metadata display |
 
 ### File Format Support
 
@@ -67,7 +67,9 @@ Loaded spectra are stored in `self.spectra` (dict):
 ### Key Methods
 
 - `processa_file()` — dispatches to the correct parser based on file extension
-- `aggiorna_vista()` — refreshes all three panels after any data change
+- `aggiorna_vista()` — refreshes all three panels after any data change; auto-selects the
+  listbox entry when exactly one spectrum is loaded, so single-selection tools (Trim,
+  Smoothing, Deconvolution, ...) work without an explicit click first
 - `on_mouse_move()` / `on_mouse_leave()` — interactive crosshair cursor tracking on plot
 - `carica_da_dialog()` / `handle_drop()` — file import entry points (dialog and DnD)
 - `esporta_csv()` — exports merged spectra to CSV
@@ -75,6 +77,39 @@ Loaded spectra are stored in `self.spectra` (dict):
   `Figure` pickle / open it in PlotStyleKit's `PlotEditor` (see Dependencies above); both work
   on an in-memory pickle round-trip copy, restyled to the Origin `single` preset, so the live
   panel view is never mutated
+- `apri_trim()` / `_tr_applica()` — crop a spectrum to a window (draggable vertical lines or
+  typed values in the entry boxes, both snapped to the nearest real data point — never an
+  interpolated x) and store the selection as a new, independent spectrum; the source trace is
+  left untouched
+- `hide_selected()` / `show_selected()` (and the listbox's right-click Hide/Show) — exclude a
+  spectrum from the graph and cursor readout without removing it; still listed (greyed out) and
+  still present in the data table and metadata panel
+- `apri_deconvoluzione()` — the fit-restriction window (`self._dc_range`, two draggable vertical
+  lines) has entry boxes like Trim's, same real-data-point snapping. Left-click both adds a peak
+  and starts a line drag if near a line; `_dc_drag_stop()` only counts it as a drag (and skips
+  adding a peak) if the mouse actually moved (`self._dc_drag_moved`) — otherwise a stationary
+  click near either line is treated as a normal add-peak click. Without this, a peak near either
+  edge of the range is unclickable, which matters now that the range defaults to the whole
+  spectrum (both lines sit right at the plot's outer edges)
+- `_dc_ridisegna()` — the drawn fit/guess curve and each peak component are masked to
+  `self._dc_range` (`curve_fit` in `_dc_fit()` already only used that window); only the raw
+  spectrum trace is drawn across the full range, for context
+- `_dc_add_mode` (checkbox "Add/remove peaks") gates click-to-add and right-click-remove
+  in `_dc_press()`/`_dc_drag_stop()` — the range-line drag stays active either way. Toggling it
+  on, and opening the panel at all, call `_dc_disattiva_toolbar_mode()`: matplotlib's pan/zoom
+  toolbar mode silently swallows canvas clicks while active, which is a common cause of "clicking
+  does nothing" after zooming in to inspect a peak before adding it
+- The plot canvas's `<Button-3>` binding (`plot_widget.bind('<Button-3>', self._menu_grafico,
+  add='+')`) MUST keep `add='+'`. `FigureCanvasTk.__init__` already binds `<Button-1/2/3>` on the
+  same Tk widget to generate matplotlib's `button_press_event`; binding `<Button-3>` again
+  without `add='+'` replaces that binding instead of adding to it, so no single right-click ever
+  reaches any `mpl_connect('button_press_event', ...)` handler again — e.g. deconvolution's
+  right-click-to-remove — while `<Double-Button-3>` (bound separately by matplotlib) still works,
+  which is why the symptom looks like "only double right-click removes a peak"
+- `on_exit()` — wired to both `File → Exit` and the window close button; asks for confirmation
+  when `self._dirty` is set. `self._dirty` is set by every operation that creates a derived or
+  clipboard-pasted spectrum (average, scattering correction, subtraction, normalize, baseline,
+  smoothing, deconvolution, trim, paste), and cleared by `esporta_csv()` and `clear_all()`
 
 Method names follow Italian conventions (`leggi` = read, `aggiorna` = update, `carica` = load).
 
@@ -84,3 +119,7 @@ Method names follow Italian conventions (`leggi` = read, `aggiorna` = update, `c
 - Never change the public interface without explicit instruction
 - Preserve all existing comments and docstrings
 - When in doubt, ask before modifying
+- User-facing widget text — button/checkbox/label captions, panel titles — is English (the exit
+  confirmation, panel titles like "Scattering Correction"/"Trim", "Fit range:", "From"/"To", etc.
+  all are). `messagebox` body text stays Italian (the app's established mixed convention: English
+  chrome, Italian prose). Code comments and identifiers stay Italian either way.
