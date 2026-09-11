@@ -8,7 +8,7 @@ import datetime
 import pickle
 import traceback
 import tkinter as tk
-from tkinter import filedialog, scrolledtext, messagebox, Listbox
+from tkinter import filedialog, scrolledtext, messagebox, Listbox, ttk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import pandas as pd
 
@@ -136,6 +136,12 @@ class LabSpectrumManager:
         self._sm_y     = None
         self._sm_lines = {}
 
+        # Stato pannello derivata (Savitzky-Golay, 1a/2a)
+        self._dv_name  = None
+        self._dv_x     = None
+        self._dv_y     = None
+        self._dv_lines = {}
+
         # Stato pannello deconvoluzione (lorentziane)
         self._dc_name   = None
         self._dc_x      = None
@@ -180,11 +186,32 @@ class LabSpectrumManager:
         self.paned = tk.PanedWindow(root, orient=tk.HORIZONTAL, sashrelief=tk.RAISED, sashwidth=4)
         self.paned.pack(fill=tk.BOTH, expand=True)
 
-        # 1. SINISTRA: DATA TABLE
+        # 1. SINISTRA: DATA TABLE — Treeview invece di testo tab-separated: colonne
+        # ridimensionabili trascinando i separatori (nativo di Treeview) e intestazione
+        # sempre larga quanto la colonna (non può andare a capo su più righe, limite del
+        # widget: il nome viene troncato solo se l'utente restringe la colonna sotto la
+        # larghezza calcolata dal testo dell'intestazione).
         self.f_data = tk.Frame(self.paned, bg='#ffffff')
         tk.Label(self.f_data, text="DATA TABLE", font=('Arial', 10, 'bold'), bg='#ffffff').pack(pady=5)
-        self.data_box = scrolledtext.ScrolledText(self.f_data, width=45, font=('Consolas', 10), bd=0)
-        self.data_box.pack(padx=2, pady=2, fill=tk.BOTH, expand=True)
+        data_table_frame = tk.Frame(self.f_data, bg='#ffffff')
+        data_table_frame.pack(padx=2, pady=2, fill=tk.BOTH, expand=True)
+        data_vsb = tk.Scrollbar(data_table_frame, orient=tk.VERTICAL)
+        data_hsb = tk.Scrollbar(data_table_frame, orient=tk.HORIZONTAL)
+        self.data_table = ttk.Treeview(data_table_frame, show='headings',
+                                       yscrollcommand=data_vsb.set, xscrollcommand=data_hsb.set)
+        data_vsb.config(command=self.data_table.yview)
+        data_hsb.config(command=self.data_table.xview)
+        data_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        data_hsb.pack(side=tk.BOTTOM, fill=tk.X)
+        self.data_table.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # Select + copy: Treeview non ha un "seleziona tutto e incolla" nativo come
+        # il vecchio widget di testo, quindi lo ricreiamo con Ctrl+A / Ctrl+C (righe
+        # selezionate, header incluso, tab-separated) e un menu contestuale per scoprirli.
+        self.data_table.bind('<Control-c>', self._copia_tabella_dati)
+        self.data_table.bind('<Control-C>', self._copia_tabella_dati)
+        self.data_table.bind('<Control-a>', self._seleziona_tutto_tabella)
+        self.data_table.bind('<Control-A>', self._seleziona_tutto_tabella)
+        self.data_table.bind('<Button-3>', self._tabella_tasto_destro)
         self.paned.add(self.f_data, width=400)
 
         # 2. CENTRO: Grafico
@@ -217,96 +244,119 @@ class LabSpectrumManager:
 
         # 3. DESTRA: Gestione File
         self.f_right = tk.Frame(self.paned, bg='#f0f4f7')
-        tk.Label(self.f_right, text="LOADED SPECTRA", font=('Arial', 10, 'bold'), bg='#f0f4f7').pack(pady=5)
-        self.file_listbox = Listbox(self.f_right, selectmode=tk.MULTIPLE, height=8, font=('Arial', 9))
+        # Contenuto scorrevole verticalmente (canvas + scrollbar): alcuni pannelli
+        # operativi (Deconvolution soprattutto) hanno più controlli di quanti ne
+        # entrino in altezza, e allargare la finestra non è sempre possibile.
+        right_canvas = tk.Canvas(self.f_right, bg='#f0f4f7', highlightthickness=0)
+        right_scroll = tk.Scrollbar(self.f_right, orient=tk.VERTICAL, command=right_canvas.yview)
+        right_canvas.configure(yscrollcommand=right_scroll.set)
+        right_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        right_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.f_right_inner = tk.Frame(right_canvas, bg='#f0f4f7')
+        right_canvas_window = right_canvas.create_window((0, 0), window=self.f_right_inner, anchor='nw')
+        self.f_right_inner.bind('<Configure>',
+            lambda e: right_canvas.configure(scrollregion=right_canvas.bbox("all")))
+        right_canvas.bind('<Configure>',
+            lambda e: right_canvas.itemconfig(right_canvas_window, width=e.width))
+
+        tk.Label(self.f_right_inner, text="LOADED SPECTRA", font=('Arial', 10, 'bold'), bg='#f0f4f7').pack(pady=5)
+        self.file_listbox = Listbox(self.f_right_inner, selectmode=tk.MULTIPLE, height=8, font=('Arial', 9))
         self.file_listbox.pack(padx=10, pady=5, fill=tk.X)
         self.file_listbox.bind('<Button-3>', self._listbox_tasto_destro)
 
-        btn_frame = tk.Frame(self.f_right, bg='#f0f4f7')
+        btn_frame = tk.Frame(self.f_right_inner, bg='#f0f4f7')
         btn_frame.pack(fill=tk.X, padx=10)
         tk.Button(btn_frame, text="Remove Selected", command=self.remove_selected).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
         tk.Button(btn_frame, text="Clear All", command=self.clear_all).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
 
-        btn_frame_vis = tk.Frame(self.f_right, bg='#f0f4f7')
+        btn_frame_vis = tk.Frame(self.f_right_inner, bg='#f0f4f7')
         btn_frame_vis.pack(fill=tk.X, padx=10, pady=(2, 0))
         tk.Button(btn_frame_vis, text="Hide Selected", command=self.hide_selected).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
         tk.Button(btn_frame_vis, text="Show Selected", command=self.show_selected).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
 
-        btn_frame2 = tk.Frame(self.f_right, bg='#f0f4f7')
+        btn_frame2 = tk.Frame(self.f_right_inner, bg='#f0f4f7')
         btn_frame2.pack(fill=tk.X, padx=10, pady=(2, 0))
         tk.Button(btn_frame2, text="Average Selected", command=self.media_selezionati,
                   bg='#e8f5e9', font=('Arial', 9)).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
         tk.Button(btn_frame2, text="Scaled Subtraction", command=self.apri_sottrazione_scalata,
                   bg='#fff3e0', font=('Arial', 9)).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
 
-        tk.Button(self.f_right, text="Scattering Correction",
+        tk.Button(self.f_right_inner, text="Scattering Correction",
                   command=self.apri_correzione_scattering,
                   bg='#dce8f5', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(4, 0))
-        tk.Button(self.f_right, text="Normalize Selected",
+        tk.Button(self.f_right_inner, text="Normalize Selected",
                   command=self.apri_normalizzazione,
                   bg='#f3e5f5', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(4, 0))
-        tk.Button(self.f_right, text="Baseline (FTIR)",
+        tk.Button(self.f_right_inner, text="Baseline (FTIR)",
                   command=self.apri_baseline,
                   bg='#d7ccc8', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(4, 0))
-        tk.Button(self.f_right, text="Adaptive Baseline",
+        tk.Button(self.f_right_inner, text="Adaptive Baseline",
                   command=self.apri_baseline_adattiva,
                   bg='#c8e6c9', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(4, 0))
-        tk.Button(self.f_right, text="Smooth Selected",
+        tk.Button(self.f_right_inner, text="Smooth Selected",
                   command=self.apri_smoothing,
                   bg='#ffe0b2', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(4, 0))
-        tk.Button(self.f_right, text="Deconvolution",
+        tk.Button(self.f_right_inner, text="Deconvolution",
                   command=self.apri_deconvoluzione,
                   bg='#b3e5fc', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(4, 0))
-        tk.Button(self.f_right, text="Trim",
+        tk.Button(self.f_right_inner, text="Trim",
                   command=self.apri_trim,
                   bg='#cfd8dc', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(4, 0))
+        tk.Button(self.f_right_inner, text="Derivative",
+                  command=self.apri_derivata,
+                  bg='#d1c4e9', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(4, 0))
 
         # --- PANNELLO METADATA (visibile per default) ---
-        self.f_metadata = tk.Frame(self.f_right, bg='#f0f4f7')
+        self.f_metadata = tk.Frame(self.f_right_inner, bg='#f0f4f7')
         self.f_metadata.pack(fill=tk.BOTH, expand=True)
         tk.Label(self.f_metadata, text="METADATA", font=('Arial', 10, 'bold'), bg='#f0f4f7').pack(pady=(15, 5))
-        self.param_box = scrolledtext.ScrolledText(self.f_metadata, width=45, font=('Consolas', 9), bg='#f0f4f7', bd=0)
+        self.param_box = scrolledtext.ScrolledText(self.f_metadata, width=45, height=15, font=('Consolas', 9), bg='#f0f4f7', bd=0)
         self.param_box.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
 
         # --- PANNELLO SCATTERING (nascosto per default) ---
-        self.f_scattering = tk.Frame(self.f_right, bg='#f0f4f7')
+        self.f_scattering = tk.Frame(self.f_right_inner, bg='#f0f4f7')
         # non packed — appare solo quando attivato
         self._costruisci_pannello_scattering()
 
         # --- PANNELLO SCALED SUBTRACTION (nascosto per default) ---
-        self.f_subtraction = tk.Frame(self.f_right, bg='#f0f4f7')
+        self.f_subtraction = tk.Frame(self.f_right_inner, bg='#f0f4f7')
         # non packed — appare solo quando attivato
         self._costruisci_pannello_sottrazione()
 
         # --- PANNELLO NORMALIZE (nascosto per default) ---
-        self.f_normalize = tk.Frame(self.f_right, bg='#f0f4f7')
+        self.f_normalize = tk.Frame(self.f_right_inner, bg='#f0f4f7')
         # non packed — appare solo quando attivato
         self._costruisci_pannello_normalizzazione()
 
         # --- PANNELLO BASELINE FTIR (nascosto per default) ---
-        self.f_baseline = tk.Frame(self.f_right, bg='#f0f4f7')
+        self.f_baseline = tk.Frame(self.f_right_inner, bg='#f0f4f7')
         # non packed — appare solo quando attivato
         self._costruisci_pannello_baseline()
 
         # --- PANNELLO BASELINE ADATTIVA (nascosto per default) ---
-        self.f_adaptive = tk.Frame(self.f_right, bg='#f0f4f7')
+        self.f_adaptive = tk.Frame(self.f_right_inner, bg='#f0f4f7')
         # non packed — appare solo quando attivato
         self._costruisci_pannello_adattivo()
 
         # --- PANNELLO SMOOTHING (nascosto per default) ---
-        self.f_smooth = tk.Frame(self.f_right, bg='#f0f4f7')
+        self.f_smooth = tk.Frame(self.f_right_inner, bg='#f0f4f7')
         # non packed — appare solo quando attivato
         self._costruisci_pannello_smoothing()
 
         # --- PANNELLO DECONVOLUZIONE (nascosto per default) ---
-        self.f_deconv = tk.Frame(self.f_right, bg='#f0f4f7')
+        self.f_deconv = tk.Frame(self.f_right_inner, bg='#f0f4f7')
         # non packed — appare solo quando attivato
         self._costruisci_pannello_deconv()
 
         # --- PANNELLO TRIM (nascosto per default) ---
-        self.f_trim = tk.Frame(self.f_right, bg='#f0f4f7')
+        self.f_trim = tk.Frame(self.f_right_inner, bg='#f0f4f7')
         # non packed — appare solo quando attivato
         self._costruisci_pannello_trim()
+
+        # --- PANNELLO DERIVATA (nascosto per default) ---
+        self.f_derivative = tk.Frame(self.f_right_inner, bg='#f0f4f7')
+        # non packed — appare solo quando attivato
+        self._costruisci_pannello_derivata()
 
         self.paned.add(self.f_right, width=400)
 
@@ -1399,22 +1449,30 @@ class LabSpectrumManager:
         return out
 
     @staticmethod
-    def _savgol(y, window, polyorder=2):
-        """Filtro Savitzky-Golay puro numpy: fit polinomiale locale, preserva
-        altezza e forma dei picchi meglio della media mobile.
-        I coefficienti di convoluzione sono la prima riga di (AᵀA)⁻¹Aᵀ."""
+    def _savgol(y, window, polyorder=2, deriv=0, dx=1.0):
+        """Filtro Savitzky-Golay puro numpy: fit polinomiale locale.
+        deriv=0 (default) → valore filtrato, preserva altezza e forma dei picchi
+        meglio della media mobile — usato da Smoothing. deriv=1/2 → derivata
+        prima/seconda esatta del polinomio locale nel punto centrale, in unità
+        reali (divisa per dx**deriv, dx = passo della x) — usato da Derivative.
+        I coefficienti di convoluzione sono la riga `deriv` di (AᵀA)⁻¹Aᵀ, che dà
+        il coefficiente c_deriv del polinomio fit; la sua derivata d-esima in
+        j=0 è deriv!·c_deriv (derivata del monomio j**deriv)."""
         n = len(y)
         window = int(window)
         if window % 2 == 0:
             window += 1
         if window > n:
             window = n if n % 2 == 1 else n - 1
-        if window < 3 or window <= polyorder + 1:
-            return y.astype(float).copy()
+        if window < 3 or window <= polyorder + 1 or deriv > polyorder:
+            return y.astype(float).copy() if deriv == 0 else np.zeros_like(y, dtype=float)
         half = window // 2
         j = np.arange(-half, half + 1)
         A = np.vander(j, polyorder + 1, increasing=True)   # colonne j^0 … j^p
-        kernel = np.linalg.pinv(A)[0]                       # coeff. per il valore centrale
+        kernel = np.linalg.pinv(A)[deriv]                   # coeff. per il valore/derivata centrale
+        if deriv:
+            from math import factorial
+            kernel = kernel * (factorial(deriv) / (dx ** deriv))
         # Riflessione "dispari": estende il trend lineare ai bordi senza gomiti
         padded = np.pad(y.astype(float), half, mode='reflect', reflect_type='odd')
         return np.convolve(padded, kernel[::-1], mode='valid')
@@ -1720,6 +1778,181 @@ class LabSpectrumManager:
         self._sm_y     = None
         self._sm_lines = {}
         self.f_smooth.pack_forget()
+        self.f_metadata.pack(fill=tk.BOTH, expand=True)
+
+    # --- PANNELLO DERIVATA: costruzione widget ---
+    def _costruisci_pannello_derivata(self):
+        bg = '#f0f4f7'
+
+        tk.Label(self.f_derivative, text="DERIVATIVE",
+                 font=('Arial', 10, 'bold'), bg=bg).pack(pady=(15, 2))
+        self._dv_label_nome = tk.Label(self.f_derivative, text="",
+                                       font=('Consolas', 9, 'italic'), bg=bg,
+                                       wraplength=360, justify='left')
+        self._dv_label_nome.pack(padx=10)
+
+        ctrl = tk.Frame(self.f_derivative, bg=bg)
+        ctrl.pack(fill=tk.X, padx=10, pady=8)
+
+        # Ordine della derivata
+        order_row = tk.Frame(ctrl, bg=bg)
+        order_row.pack(fill=tk.X, pady=(0, 4))
+        tk.Label(order_row, text='Order', width=6, anchor='w', bg=bg, font=('Consolas', 9)).pack(side=tk.LEFT)
+        self._dv_order = tk.IntVar(value=1)
+        tk.Radiobutton(order_row, text='1st', variable=self._dv_order, value=1,
+                       bg=bg, font=('Consolas', 8), command=self._dv_aggiorna_preview).pack(side=tk.LEFT)
+        tk.Radiobutton(order_row, text='2nd', variable=self._dv_order, value=2,
+                       bg=bg, font=('Consolas', 8), command=self._dv_aggiorna_preview).pack(side=tk.LEFT)
+
+        # Smoothing (finestra Savitzky-Golay): una derivata "grezza" (finestra minima)
+        # amplifica il rumore, per questo è sempre filtrata via fit polinomiale locale.
+        row = tk.Frame(ctrl, bg=bg)
+        row.pack(fill=tk.X, pady=4)
+        tk.Label(row, text='Smooth', width=6, anchor='w', bg=bg, font=('Consolas', 9)).pack(side=tk.LEFT)
+        self._dv_s = tk.DoubleVar(value=0.6)   # una derivata "grezza" (finestra minima) è quasi solo rumore
+        tk.Scale(row, variable=self._dv_s, from_=0.0, to=1.0, resolution=0.01,
+                 orient=tk.HORIZONTAL, length=250, bg=bg,
+                 font=('Consolas', 8), showvalue=True).pack(side=tk.LEFT)
+        self._dv_s.trace_add('write', self._dv_aggiorna_preview)
+
+        tk.Label(self.f_derivative, text="◀ noisy          smooth ▶",
+                 font=('Consolas', 8), bg=bg, fg='#555555').pack()
+
+        # Ordine del polinomio Savitzky-Golay
+        poly_row = tk.Frame(ctrl, bg=bg)
+        poly_row.pack(fill=tk.X, pady=(8, 2))
+        tk.Label(poly_row, text='Poly', width=6, anchor='w', bg=bg, font=('Consolas', 9)).pack(side=tk.LEFT)
+        self._dv_poly = tk.IntVar(value=2)
+        for p_val in (2, 3, 4):
+            tk.Radiobutton(poly_row, text=str(p_val), variable=self._dv_poly, value=p_val,
+                           bg=bg, font=('Consolas', 8), command=self._dv_aggiorna_preview).pack(side=tk.LEFT, padx=4)
+
+        self._dv_info = tk.Label(self.f_derivative, text="", font=('Consolas', 8),
+                                 bg=bg, fg='#555555', justify='left')
+        self._dv_info.pack(padx=10, pady=(2, 4))
+
+        btn = tk.Frame(self.f_derivative, bg=bg)
+        btn.pack(fill=tk.X, padx=10, pady=10)
+        tk.Button(btn, text="Apply", command=self._dv_applica,
+                  bg='#2ecc71', fg='white', font=('Arial', 9, 'bold')).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+        tk.Button(btn, text="Cancel", command=self._dv_annulla).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+
+    # --- DERIVATA: finestra Savitzky-Golay dallo slider ---
+    def _dv_window(self):
+        n = len(self._dv_y)
+        s = self._dv_s.get()
+        maxw = max(5, n // 10)          # finestra massima ~10% dei punti
+        return int(max(1, round(maxw ** s)))   # s=0 → 1 (minima); s=1 → maxw
+
+    def _dv_poly_effettivo(self):
+        """Il polinomio deve avere grado ≥ ordine della derivata, altrimenti
+        la derivata richiesta è identicamente nulla."""
+        return max(self._dv_poly.get(), self._dv_order.get())
+
+    def _dv_window_effettiva(self):
+        p = self._dv_poly_effettivo()
+        win = max(self._dv_window(), p + 2)
+        if win % 2 == 0:
+            win += 1
+        return win
+
+    def _dv_derivata(self):
+        order = self._dv_order.get()
+        poly = self._dv_poly_effettivo()
+        win = self._dv_window_effettiva()
+        dx = float(np.median(np.abs(np.diff(self._dv_x))))
+        return self._savgol(self._dv_y, win, poly, deriv=order, dx=dx)
+
+    # --- DERIVATA: apertura pannello ---
+    def apri_derivata(self):
+        sel = self._selezione_effettiva()
+        if len(sel) != 1:
+            messagebox.showwarning("Derivative", "Seleziona esattamente uno spettro.")
+            return
+        name = self.file_listbox.get(sel[0])
+        df = self.spectra[name]['df']
+        self._dv_name = name
+        self._dv_x = df.index.to_numpy(dtype=float)
+        self._dv_y = df[name].to_numpy(dtype=float)
+        self._dv_label_nome.config(text=name)
+        self._dv_order.set(1)
+        self._dv_poly.set(2)
+        self._dv_s.set(0.6)
+
+        self.ax.clear()
+        self.v_line = self.v_text = None
+        tipo = self.spectra[name]['info']['Type']
+        if tipo == 'FTIR':
+            self.ax.set_xlabel("Wavenumber (cm⁻¹)")
+        elif tipo == 'Raman':
+            self.ax.set_xlabel("Raman shift (cm⁻¹)")
+        else:
+            self.ax.set_xlabel("Wavelength (nm)")
+        self.ax.set_ylabel("d/dx")
+        self.ax.grid(True, linestyle=':', alpha=0.6)
+        self.ax.axhline(0, color='gray', lw=0.8, ls=':')
+
+        self._dv_lines['deriv'], = self.ax.plot(self._dv_x, np.zeros_like(self._dv_y),
+                                                color='purple', lw=1.5, label=f'{name}_deriv')
+        self.ax.legend(fontsize=8)
+        if tipo == 'FTIR':
+            self.ax.invert_xaxis()
+        self._dv_aggiorna_preview()
+        self.canvas.draw()
+
+        self.f_metadata.pack_forget()
+        self.f_derivative.pack(fill=tk.BOTH, expand=True)
+
+    # --- DERIVATA: preview live ---
+    def _dv_aggiorna_preview(self, *_):
+        if self._dv_x is None or 'deriv' not in self._dv_lines:
+            return
+        y = self._dv_derivata()
+        self._dv_lines['deriv'].set_ydata(y)
+        margin = (y.max() - y.min()) * 0.05 or 0.05
+        self.ax.set_ylim(y.min() - margin, y.max() + margin)
+        ordinale = '1st' if self._dv_order.get() == 1 else '2nd'
+        self._dv_info.config(
+            text=f"{ordinale} derivative — Sav-Golay: window {self._dv_window_effettiva()} pt, poly {self._dv_poly_effettivo()}")
+        self.canvas.draw_idle()
+
+    # --- DERIVATA: applica ---
+    def _dv_applica(self):
+        deriv = self._round_sig(self._dv_derivata(), sig=6)
+        order = self._dv_order.get()
+        new_name = f"{self._dv_name}_d{order}"
+        final_name = new_name
+        counter = 2
+        while final_name in self.spectra:
+            final_name = f"{new_name}_{counter}"
+            counter += 1
+        new_info = dict(self.spectra[self._dv_name]['info'])
+        new_info['Sample']         = final_name
+        new_info['Derived from']   = self._dv_name
+        new_info['Operation']      = f"{'1st' if order == 1 else '2nd'} derivative"
+        new_info['Deriv Method']   = 'Savitzky-Golay'
+        new_info['Deriv Window']   = f"{self._dv_window_effettiva()} pts"
+        new_info['Deriv Poly']     = str(self._dv_poly_effettivo())
+        self.spectra[final_name] = {
+            'df':   pd.DataFrame({final_name: deriv}, index=self.spectra[self._dv_name]['df'].index),
+            'info': new_info,
+        }
+        self._dirty = True
+        self._dv_chiudi_pannello()
+        self.aggiorna_vista()
+
+    # --- DERIVATA: annulla ---
+    def _dv_annulla(self):
+        self._dv_chiudi_pannello()
+        self.aggiorna_vista()
+
+    # --- DERIVATA: chiude il pannello ---
+    def _dv_chiudi_pannello(self):
+        self._dv_name  = None
+        self._dv_x     = None
+        self._dv_y     = None
+        self._dv_lines = {}
+        self.f_derivative.pack_forget()
         self.f_metadata.pack(fill=tk.BOTH, expand=True)
 
     # --- PANNELLO DECONVOLUZIONE: costruzione widget ---
@@ -2421,7 +2654,7 @@ class LabSpectrumManager:
         return (self._sc_name is not None or self._sub_name_a is not None or self._norm_names
                 or self._bl_name is not None or self._ab_name is not None
                 or self._sm_name is not None or self._dc_name is not None
-                or self._tr_name is not None)
+                or self._tr_name is not None or self._dv_name is not None)
 
     def _cursor_best_position(self):
         """Sceglie l'angolo del grafico con minor densità di punti tracciati nelle
@@ -3088,9 +3321,53 @@ class LabSpectrumManager:
         }
 
     # --- VISTA ---
+    def _popola_tabella_dati(self, table_df):
+        """Ricostruisce le colonne del Treeview Data Table (X + una per spettro) e
+        inserisce i dati. Larghezza iniziale delle colonne commisurata al testo
+        dell'intestazione, poi liberamente ridimensionabile trascinando i separatori
+        (comportamento nativo di Treeview)."""
+        x_label = table_df.index.name or 'X'
+        cols = [x_label] + list(table_df.columns)
+        self.data_table['columns'] = cols
+        for c in cols:
+            self.data_table.heading(c, text=c)
+            width = max(90, min(200, 8 * len(str(c)) + 24))
+            self.data_table.column(c, width=width, minwidth=50, anchor='center', stretch=False)
+        rounded = table_df.round(4)
+        for idx_val, row in zip(rounded.index, rounded.itertuples(index=False)):
+            values = [round(float(idx_val), 4)] + ['' if pd.isna(v) else v for v in row]
+            self.data_table.insert('', tk.END, values=values)
+
+    def _seleziona_tutto_tabella(self, event=None):
+        self.data_table.selection_set(self.data_table.get_children())
+        return 'break'
+
+    def _copia_tabella_dati(self, event=None):
+        """Copia le righe selezionate della Data Table (intestazione inclusa,
+        tab-separated) — compensa l'assenza, in Treeview, del "seleziona tutto e
+        incolla" che aveva il vecchio widget di testo."""
+        sel = set(self.data_table.selection())
+        if not sel:
+            return
+        righe = ['\t'.join(str(c) for c in self.data_table['columns'])]
+        for item in self.data_table.get_children():
+            if item in sel:
+                righe.append('\t'.join(str(v) for v in self.data_table.item(item, 'values')))
+        self.root.clipboard_clear()
+        self.root.clipboard_append('\n'.join(righe))
+
+    def _tabella_tasto_destro(self, event):
+        row = self.data_table.identify_row(event.y)
+        if row and row not in self.data_table.selection():
+            self.data_table.selection_set(row)
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Copy selected rows   (Ctrl+C)", command=self._copia_tabella_dati)
+        menu.add_command(label="Select All   (Ctrl+A)", command=self._seleziona_tutto_tabella)
+        menu.tk_popup(event.x_root, event.y_root)
+
     def aggiorna_vista(self):
         self.file_listbox.delete(0, tk.END)
-        self.data_box.delete(1.0, tk.END)
+        self.data_table.delete(*self.data_table.get_children())
         self.param_box.delete(1.0, tk.END)
         self.ax.clear()
         self.v_line = self.v_text = None
@@ -3131,7 +3408,7 @@ class LabSpectrumManager:
             x_index_label = 'Wavelength (nm)'
         table_df = master_df.copy()
         table_df.index.name = x_index_label
-        self.data_box.insert(tk.END, table_df.round(4).to_csv(sep='\t', lineterminator='\n'))
+        self._popola_tabella_dati(table_df)
 
         visible_cols = [c for c in master_df.columns if c not in self._hidden_spectra]
         for col in visible_cols:
@@ -3328,6 +3605,8 @@ class LabSpectrumManager:
             return "Deconvolution"
         if self._tr_name is not None:
             return "Trim"
+        if self._dv_name is not None:
+            return "Derivative"
         return None
 
     def remove_selected(self):

@@ -37,10 +37,16 @@ pythonw LabSpectrumManager.pyw [spectrum_file]
 
 ## Interface
 
-Three panels side by side: a data table (merged spectra as tab-separated text) on the left, a
-Matplotlib graph with an interactive crosshair cursor in the center, and a list of loaded spectra
-(multi-select) with metadata on the right. The X/Y readout that follows the cursor picks its
-corner automatically to avoid the plotted curves, and can be dragged anywhere on the graph.
+Three panels side by side: a data table of the merged spectra on the left, a Matplotlib graph
+with an interactive crosshair cursor in the center, and a list of loaded spectra (multi-select)
+with metadata on the right — which scrolls vertically, since some tool panels (Deconvolution)
+can need more room than the window has. The X/Y readout that follows the cursor picks its corner
+automatically to avoid the plotted curves, and can be dragged anywhere on the graph.
+
+The data table's columns (one per spectrum, plus X) can be resized by dragging their border, and
+the table scrolls both ways once there are more columns or rows than fit. Select rows (click,
+Shift/Ctrl to extend, Ctrl+A for all) and Ctrl+C — or right-click — to copy them, header included,
+tab-separated, ready to paste into Excel/Origin.
 
 Any spectrum can be hidden from the graph (Hide Selected / Show Selected, or right-click in the
 list) without removing it — it stays in the list (greyed out), data table and metadata, just off
@@ -69,6 +75,9 @@ export — see Dependencies.
 - **Average** of several selected spectra.
 - **Smoothing** — repeated moving average (boxcar, ~Gaussian) or Savitzky-Golay filter (local
   polynomial fit, better preserves peak height and shape).
+- **Derivative** — 1st or 2nd derivative via Savitzky-Golay (exact derivative of a local
+  polynomial fit, in real X units), with the same adjustable smoothing/polynomial-order controls
+  as Smoothing, useful for resolving overlapping bands or removing a sloping baseline.
 - **Deconvolution** — interactive multi-peak fit (click to add/remove a peak) with a
   Lorentzian, Gaussian or pseudo-Voigt profile; the fit is restricted to a window settable by
   dragging its two boundary lines or typing exact values, same as Trim below.

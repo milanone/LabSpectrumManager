@@ -52,9 +52,9 @@ Loaded spectra are stored in `self.spectra` (dict):
 
 | Panel | Contents |
 |-------|----------|
-| Left (400px) | Data table — merged spectra as tab-separated text |
+| Left (400px) | Data table — `ttk.Treeview` grid of merged spectra (X + one column per sample), user-resizable columns, vertical + horizontal scrollbars |
 | Center (700px) | Matplotlib graph with interactive cursor overlay |
-| Right (400px) | Spectrum listbox (multi-select), remove/clear/hide/show buttons, metadata display |
+| Right (400px) | Spectrum listbox (multi-select), remove/clear/hide/show buttons, metadata display, all inside a scrollable canvas (`self.f_right_inner`) since some operation panels (Deconvolution) can need more vertical space than the window has |
 
 ### File Format Support
 
@@ -67,6 +67,21 @@ Loaded spectra are stored in `self.spectra` (dict):
 ### Key Methods
 
 - `processa_file()` — dispatches to the correct parser based on file extension
+- `_popola_tabella_dati()` — rebuilds the Data Table `ttk.Treeview` columns (X + one per
+  spectrum) and rows from the merged, rounded DataFrame; called by `aggiorna_vista()`. NaN
+  (non-overlapping X ranges between spectra of different resolution/span) renders as an empty
+  cell, matching the old CSV-text `to_csv(na_rep='')` behavior it replaced
+- `_copia_tabella_dati()` / `_seleziona_tutto_tabella()` — Ctrl+C / Ctrl+A on the Data Table (also
+  in its right-click menu) copy the selected rows (header included, tab-separated) to the
+  clipboard, replacing the old Text widget's native select-all-and-copy now that it's a Treeview.
+  Selecting nothing and pressing Ctrl+C is a no-op (leaves the clipboard untouched)
+- `apri_derivata()` / `_dv_derivata()` — 1st/2nd derivative via `_savgol(..., deriv=1|2, dx=...)`
+  (see below); `dx` is `median(abs(diff(x)))`, always positive regardless of whether the spectrum's
+  index happens to run ascending or descending, so the derivative's sign follows increasing X by
+  convention. Same window/poly controls as Smoothing, but the "Smooth" slider defaults to 0.6 (not
+  0.0): a derivative taken with the minimal window is almost pure noise, unlike a lightly-smoothed
+  spectrum, so starting near "no smoothing" like Smoothing does would make the first thing the user
+  sees look broken
 - `aggiorna_vista()` — refreshes all three panels after any data change; auto-selects the
   listbox entry when exactly one spectrum is loaded, so single-selection tools (Trim,
   Smoothing, Deconvolution, ...) work without an explicit click first
@@ -123,3 +138,7 @@ Method names follow Italian conventions (`leggi` = read, `aggiorna` = update, `c
   confirmation, panel titles like "Scattering Correction"/"Trim", "Fit range:", "From"/"To", etc.
   all are). `messagebox` body text stays Italian (the app's established mixed convention: English
   chrome, Italian prose). Code comments and identifiers stay Italian either way.
+- Any new widget that belongs in the right panel (a new operation button, a new panel frame) must
+  be parented to `self.f_right_inner`, not `self.f_right` — the latter is now just the outer
+  frame holding the scrollable canvas + scrollbar; parenting to it directly would place the
+  widget outside the scrollable area.
