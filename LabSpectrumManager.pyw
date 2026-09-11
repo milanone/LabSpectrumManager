@@ -514,7 +514,7 @@ class LabSpectrumManager:
         self.v_line = self.v_text = None
         tipo = self.spectra[name]['info']['Type']
         self.ax.set_xlabel("Raman shift (cm⁻¹)" if tipo == 'Raman' else "Wavelength (nm)")
-        self.ax.set_ylabel("Intensity (A.U.)" if tipo in ('Fluorescence', 'Raman') else "Absorbance (A)")
+        self.ax.set_ylabel("Intensity (A.U.)" if tipo in ('Fluorescence', 'Raman') else "Absorbance")
         self.ax.grid(True, linestyle=':', alpha=0.6)
 
         self._sc_lines['orig'], = self.ax.plot(self._sc_x, self._sc_y,
@@ -862,7 +862,7 @@ class LabSpectrumManager:
             self.ax.set_ylabel("Intensity (A.U.)")
         else:
             self.ax.set_xlabel("Wavelength (nm)")
-            self.ax.set_ylabel("Absorbance (A)")
+            self.ax.set_ylabel("Absorbance")
         self.ax.grid(True, linestyle=':', alpha=0.6)
 
         self._sub_lines['ref'],  = self.ax.plot([], [], color='gray', lw=1.2,
@@ -1530,7 +1530,7 @@ class LabSpectrumManager:
             self.ax.set_ylabel("Intensity (A.U.)")
         else:
             self.ax.set_xlabel("Wavelength (nm)")
-            self.ax.set_ylabel("Absorbance (A)")
+            self.ax.set_ylabel("Absorbance")
         self.ax.grid(True, linestyle=':', alpha=0.6)
 
         # In anteprima mostriamo solo originale + baseline (stessa scala):
@@ -1710,7 +1710,7 @@ class LabSpectrumManager:
             self.ax.set_ylabel("Intensity (A.U.)")
         else:
             self.ax.set_xlabel("Wavelength (nm)")
-            self.ax.set_ylabel("Absorbance (A)")
+            self.ax.set_ylabel("Absorbance")
         self.ax.grid(True, linestyle=':', alpha=0.6)
 
         self._sm_lines['orig'], = self.ax.plot(self._sm_x, self._sm_y,
@@ -2296,7 +2296,7 @@ class LabSpectrumManager:
             self.ax.set_ylabel("Intensity (A.U.)")
         else:
             self.ax.set_xlabel("Wavelength (nm)")
-            self.ax.set_ylabel("Absorbance (A)")
+            self.ax.set_ylabel("Absorbance")
         self.ax.grid(True, linestyle=':', alpha=0.6)
 
         self.ax.plot(x, y, color='steelblue', alpha=0.5, lw=1.5, label=f'{self._dc_name}')
@@ -2490,7 +2490,7 @@ class LabSpectrumManager:
             self.ax.set_ylabel("Intensity (A.U.)")
         else:
             self.ax.set_xlabel("Wavelength (nm)")
-            self.ax.set_ylabel("Absorbance (A)")
+            self.ax.set_ylabel("Absorbance")
         self.ax.grid(True, linestyle=':', alpha=0.6)
 
         self._tr_lines['orig'], = self.ax.plot(self._tr_x, self._tr_y,
@@ -3017,7 +3017,7 @@ class LabSpectrumManager:
         altrimenti cade su 'Transmittance / Absorbance'.
         """
         UNITS = {
-            'Absorbance':     'Absorbance (A)',
+            'Absorbance':     'Absorbance',
             'Transmittance':  'Transmittance (T)',
             'Transmittance %':'Transmittance (%T)',
             'Reflectance':    'Reflectance (R)',
@@ -3433,7 +3433,7 @@ class LabSpectrumManager:
             self.ax.set_ylabel("Intensity (A.U.)")
         else:
             self.ax.set_xlabel("Wavelength (nm)")
-            self.ax.set_ylabel("Absorbance (A)")
+            self.ax.set_ylabel("Absorbance")
 
         if visible_cols:
             self.ax.legend(fontsize='8', loc='best')
