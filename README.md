@@ -52,7 +52,15 @@ Any spectrum can be hidden from the graph (Hide Selected / Show Selected, or rig
 list) without removing it — it stays in the list (greyed out), data table and metadata, just off
 the plot. Closing the app (window close button or `File → Exit`) asks for confirmation if there
 are calculated results — averages, fits, corrections, trims, pasted data — that haven't been
-exported yet with `File → Export CSV`.
+exported yet with `File → Export CSV` or saved with `File → Save Session...`.
+
+`File → Save Session...` saves everything currently loaded — every spectrum, including ones
+derived from a processing tool (scattering correction, baseline, smoothing, fit, trim, average,
+...) — to a single `.lsmsession` file, so the work can be resumed later instead of redone step by
+step. `File → Open Session...` reloads it, replacing what's currently loaded. Each processing
+panel must be closed (Apply or Cancel) before saving, with one exception: Deconvolution can be
+saved mid-fit — peaks, fit range, profile and offset not yet applied — and reopening the session
+restores the panel to that exact state so the fit can be resumed.
 
 `File → Save Figure (pickle)` saves the current graph as a live, re-editable `Figure` object
 (not a raster image); `File → Edit Figure...` opens it directly in PlotStyleKit's figure editor
