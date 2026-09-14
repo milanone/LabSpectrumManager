@@ -174,6 +174,10 @@ class LabSpectrumManager:
         self.menu_bar = tk.Menu(root)
         self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.file_menu.add_command(label="Open Files (.dsp, .sp, .spc, .csv)", command=self.carica_da_dialog)
+        self.file_menu.add_separator()
+        self.file_menu.add_command(label="Open Session...", command=self.apri_sessione)
+        self.file_menu.add_command(label="Save Session...", command=self.salva_sessione)
+        self.file_menu.add_separator()
         self.file_menu.add_command(label="Export CSV", command=self.esporta_csv)
         self.file_menu.add_command(label="Save Figure (pickle)", command=self.salva_figura_pickle)
         self.file_menu.add_command(label="Edit Figure...", command=self.apri_editor_figura)
@@ -2051,20 +2055,39 @@ class LabSpectrumManager:
         tk.Button(btn2, text="Cancel", command=self._dc_annulla).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
 
     # --- DECONVOLUZIONE: apertura pannello ---
-    def apri_deconvoluzione(self):
-        sel = self._selezione_effettiva()
-        if len(sel) != 1:
-            messagebox.showwarning("Deconvolution", "Seleziona esattamente uno spettro.")
-            return
-        name = self.file_listbox.get(sel[0])
+    def apri_deconvoluzione(self, restore=None):
+        """Apre il pannello sullo spettro selezionato con picchi vuoti (uso normale, da
+        menu/pulsante), oppure - se 'restore' è passato (da apri_sessione, per riprendere
+        un fit sospeso salvato con Save Session) - sullo spettro e con lo stato (picchi,
+        range, forma, offset) che aveva al momento del salvataggio, senza richiedere una
+        selezione in lista."""
+        if restore is None:
+            sel = self._selezione_effettiva()
+            if len(sel) != 1:
+                messagebox.showwarning("Deconvolution", "Seleziona esattamente uno spettro.")
+                return
+            name = self.file_listbox.get(sel[0])
+        else:
+            name = restore['spectrum']
+            if name not in self.spectra:
+                messagebox.showwarning(
+                    "Deconvolution",
+                    f"Lo spettro '{name}' del fit sospeso salvato non è più presente.")
+                return
         df = self.spectra[name]['df']
         self._dc_name = name
         self._dc_x = df.index.to_numpy(dtype=float)
         self._dc_y = df[name].to_numpy(dtype=float)
-        self._dc_peaks  = []
-        self._dc_offset = 0.0
-        self._dc_fitted = False
-        self._dc_range  = [float(self._dc_x.min()), float(self._dc_x.max())]
+        if restore is None:
+            self._dc_peaks  = []
+            self._dc_offset = 0.0
+            self._dc_fitted = False
+            self._dc_range  = [float(self._dc_x.min()), float(self._dc_x.max())]
+        else:
+            self._dc_peaks  = [dict(pk) for pk in restore['peaks']]
+            self._dc_offset = restore['offset']
+            self._dc_fitted = restore['fitted']
+            self._dc_range  = list(restore['range'])
         self._dc_drag   = None
         self._dc_drag_moved = False
         self._dc_add_mode.set(True)
@@ -2076,6 +2099,11 @@ class LabSpectrumManager:
             self.canvas.mpl_connect('motion_notify_event',  self._dc_drag_move),
             self.canvas.mpl_connect('button_release_event', self._dc_drag_stop),
         ]
+        if restore is not None:
+            # .set() da codice non invoca il -command del Radiobutton (parte solo dal
+            # click utente): aggiorna solo quale forma appare selezionata, senza toccare
+            # gli η già ripristinati sopra per ciascun picco.
+            self._dc_shape.set(restore['shape'])
         self._dc_ridisegna()
 
         self.f_metadata.pack_forget()
@@ -3656,12 +3684,91 @@ class LabSpectrumManager:
             pd.concat(dfs, axis=1).round(4).to_csv(path)
             self._dirty = False
 
+    def salva_sessione(self):
+        """Salva l'intero stato degli spettri caricati (self.spectra) in un unico file
+        pickle, così i risultati di operazioni in sequenza (smoothing, fit, trim, medie,
+        ecc. - già 'cotti' nei DataFrame risultanti) si possono riprendere più avanti
+        senza dover ripetere ogni passaggio. Include anche quali spettri erano nascosti.
+        Eccezione: se il pannello aperto è la Deconvoluzione, il salvataggio è comunque
+        permesso e porta con sé anche il fit non ancora applicato (picchi, range, forma,
+        offset) così da poterlo riprendere esattamente dove l'hai lasciato - per tutti
+        gli altri pannelli va prima chiuso con Apply o Cancel, perché il loro risultato
+        (o le sue modifiche) esiste solo come DataFrame finale, non come stato riprendibile."""
+        pannello = self._pannello_attivo()
+        if pannello and self._dc_name is None:
+            messagebox.showwarning("Save Session", f"Chiudi prima il pannello {pannello} (Apply o Cancel).")
+            return
+        if not self.spectra:
+            messagebox.showwarning("Save Session", "Nessuno spettro caricato.")
+            return
+        path = filedialog.asksaveasfilename(
+            initialdir=self.current_dir, defaultextension='.lsmsession',
+            filetypes=[("Lab Spectrum Manager Session", "*.lsmsession"), ("All Files", "*.*")])
+        if not path:
+            return
+        data = {
+            'version': 2,
+            'spectra': self.spectra,
+            'hidden': list(self._hidden_spectra),
+        }
+        if self._dc_name is not None:
+            data['pending_deconv'] = {
+                'spectrum': self._dc_name,
+                'peaks':    [dict(pk) for pk in self._dc_peaks],
+                'range':    list(self._dc_range),
+                'shape':    self._dc_shape.get(),
+                'offset':   self._dc_offset,
+                'fitted':   self._dc_fitted,
+            }
+        try:
+            with open(path, 'wb') as f:
+                pickle.dump(data, f)
+        except Exception as e:
+            traceback.print_exc()
+            messagebox.showerror("Save Session", f"Salvataggio fallito:\n{e}")
+            return
+        self._dirty = False
+        messagebox.showinfo("Save Session", f"Sessione salvata:\n{path}")
+
+    def apri_sessione(self):
+        """Carica una sessione salvata con Save Session, sostituendo tutto quanto
+        attualmente caricato (spettri e stato mostra/nascondi)."""
+        pannello = self._pannello_attivo()
+        if pannello:
+            messagebox.showwarning("Open Session", f"Chiudi prima il pannello {pannello} (Apply o Cancel).")
+            return
+        if self._dirty and not messagebox.askyesno(
+                "Open Session",
+                "You have unsaved calculated results (not exported or saved as a session). "
+                "Discard and open session anyway?"):
+            return
+        path = filedialog.askopenfilename(
+            initialdir=self.current_dir,
+            filetypes=[("Lab Spectrum Manager Session", "*.lsmsession"), ("All Files", "*.*")])
+        if not path:
+            return
+        try:
+            with open(path, 'rb') as f:
+                data = pickle.load(f)
+            self.spectra = data['spectra']
+            self._hidden_spectra = set(data.get('hidden', []))
+            pending_deconv = data.get('pending_deconv')
+        except Exception as e:
+            traceback.print_exc()
+            messagebox.showerror("Open Session", f"Apertura sessione fallita:\n{e}")
+            return
+        self.current_dir = os.path.dirname(path)
+        self._dirty = False
+        self.aggiorna_vista()
+        if pending_deconv is not None:
+            self.apri_deconvoluzione(restore=pending_deconv)
+
     def on_exit(self):
         """Chiude l'app, avvisando se ci sono risultati calcolati (scattering, fit,
-        medie, trim, ...) non ancora esportati con 'Export CSV'."""
+        medie, trim, ...) non ancora esportati con 'Export CSV' o salvati con 'Save Session'."""
         if self._dirty and not messagebox.askyesno(
                 "Exit",
-                "You have unsaved calculated results (not exported via Export CSV). Exit anyway?"):
+                "You have unsaved calculated results (not exported or saved as a session). Exit anyway?"):
             return
         self.root.destroy()
 
