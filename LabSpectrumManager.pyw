@@ -3169,6 +3169,12 @@ class LabSpectrumManager:
                 "spettro. I dati numerici vanno esportati con 'File Storage' attivo.")
             return
 
+        # Export di un lettore di micropiastre BMG (spettri di assorbanza per pozzetto):
+        # la prima riga contiene sempre "Test run no.:"
+        if 'Test run no.' in head:
+            self._leggi_csv_bmg(path)
+            return
+
         line1 = first_lines[1] if len(first_lines) > 1 else ''
         if 'Wavelength' in line1 and ('Abs' in line1 or 'abs' in line1):
             self._leggi_csv_cary(path)
@@ -3273,6 +3279,112 @@ class LabSpectrumManager:
                 'df':   pd.DataFrame({final_label: y}, index=x),
                 'info': info,
             }
+
+    def _leggi_csv_bmg(self, path, sottrai_bianco=None):
+        """Parser per l'export CSV di un lettore di micropiastre BMG (spettri di assorbanza).
+
+        Formato (separatore ';', una riga per pozzetto):
+          - intestazione di metadati (utente/percorso/"Test run no.", nome test, data e ora,
+            "ID1:" con il nome dell'esperimento, tipo di misura, e una riga che dice se i
+            dati sono "Raw Data" o "Blank corrected based on Raw Data")
+          - riga " Well; Content; 1 - 1; ..." (etichette delle misure, ignorata)
+          - riga ";Wavelength [nm];350;351;..." con le lunghezze d'onda
+          - una riga per pozzetto: id pozzetto (A01), contenuto (Sample X1 / Blank B), valori
+        Nel file "blank corrected" le righe dei bianchi sono vuote e ogni campione vale
+        campione - media dei bianchi (verificato entro 0.001 su un export reale).
+
+        sottrai_bianco: True/False per decidere se sottrarre la media dei pozzetti "Blank"
+        (solo file grezzi con bianchi); None = chiede all'utente.
+        """
+        with open(path, 'r', encoding='latin-1') as f:
+            lines = f.read().splitlines()
+
+        idx_wl = next((i for i, l in enumerate(lines) if l.startswith(';Wavelength [nm]')), None)
+        if idx_wl is None:
+            raise ValueError("File BMG non valido: riga ';Wavelength [nm]' non trovata")
+
+        def num(s):
+            # l'export segue le impostazioni regionali: accetta anche la virgola decimale
+            try:
+                return float(s.strip().replace(',', '.'))
+            except ValueError:
+                return np.nan
+
+        header = lines[:idx_wl]
+        meta = {}
+        for chiave, pattern in [('Run', 'Test run no.:'), ('Test', 'Test name:'),
+                                ('Experiment', 'ID1:')]:
+            for l in header:
+                pos = l.find(pattern)
+                if pos != -1:
+                    meta[chiave] = l[pos + len(pattern):].split(';')[0].strip()
+                    break
+        data = re.search(r'Date:[ \t]*([^;\r\n]+)', '\n'.join(header))
+        ora = re.search(r'Time:[ \t]*([^;\r\n]+)', '\n'.join(header))
+        data_ora = ' '.join(m.group(1).strip() for m in (data, ora) if m) or 'N/A'
+        tipo_dati = next((l.strip().rstrip('#').strip() for l in header
+                          if l.strip().startswith(('Raw Data', 'Blank corrected'))), '')
+        if tipo_dati:
+            meta['Data'] = tipo_dati
+        if 'BMG' in '\n'.join(header):
+            meta['Instrument'] = 'BMG plate reader'
+
+        wl = np.array([num(v) for v in lines[idx_wl].split(';')[2:]])
+        wl = wl[~np.isnan(wl)]
+        n = len(wl)
+        if n == 0:
+            raise ValueError("File BMG non valido: nessuna lunghezza d'onda")
+
+        pozzetti = []   # (well, content, valori, è_bianco)
+        for l in lines[idx_wl + 1:]:
+            parts = l.split(';')
+            if len(parts) < 3 or not parts[0].strip():
+                continue
+            vals = np.array([num(v) for v in parts[2:2 + n]])
+            if len(vals) < n:
+                vals = np.concatenate([vals, np.full(n - len(vals), np.nan)])
+            if np.isnan(vals).all():
+                continue   # bianco già sottratto dal software: riga vuota
+            content = parts[1].strip()
+            pozzetti.append((parts[0].strip(), content, vals, content.lower().startswith('blank')))
+
+        campioni = [p for p in pozzetti if not p[3]]
+        bianchi = [p for p in pozzetti if p[3]]
+        if not campioni:
+            campioni, bianchi = bianchi, []   # solo bianchi: si caricano come spettri normali
+        if not campioni:
+            raise ValueError("nessun pozzetto con dati nel file BMG")
+
+        media_bianchi = None
+        if bianchi and sottrai_bianco is None:
+            sottrai_bianco = messagebox.askyesno(
+                "BMG - pozzetti Blank",
+                f"'{os.path.basename(path)}' contiene {len(bianchi)} pozzetti 'Blank' con dati "
+                "grezzi.\n\nSottrarre la media dei bianchi dai campioni?\n"
+                "(No: i campioni e i bianchi vengono caricati come sono.)")
+        if bianchi and sottrai_bianco:
+            media_bianchi = np.nanmean([p[2] for p in bianchi], axis=0)
+            da_caricare = campioni
+        else:
+            da_caricare = campioni + bianchi
+
+        filename_base = os.path.splitext(os.path.basename(path))[0]
+        for well, content, vals, _ in da_caricare:
+            y = vals - media_bianchi if media_bianchi is not None else vals
+            label = f"{filename_base}_{well}"
+            final_label = label
+            counter = 2
+            while final_label in self.spectra:
+                final_label = f"{label}_{counter}"
+                counter += 1
+
+            serie = pd.DataFrame({final_label: self._round_sig(y)}, index=wl).dropna()
+            info = {'Sample': final_label, 'Date': data_ora, 'Type': 'UV-Vis',
+                    'Well': well, 'Content': content}
+            info.update(meta)
+            if media_bianchi is not None:
+                info['Blank'] = f"media di {len(bianchi)} pozzetti sottratta"
+            self.spectra[final_label] = {'df': serie, 'info': info}
 
     def leggi_spc(self, path):
         """Parser per file binari .SPC (Shimadzu RF-5301 fluorescence spectrometer)."""
