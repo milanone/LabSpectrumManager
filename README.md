@@ -169,3 +169,7 @@ export — see Dependencies.
 - `test_sp_reader.py` — test for the native `.sp` parser (FTIR PerkinElmer)
 - `tests/test_bmg_reader.py` — unit tests for the BMG plate-reader CSV reader (synthetic files;
   run with `python -m unittest discover -s tests -v`)
+
+## License
+
+[MIT](LICENSE)

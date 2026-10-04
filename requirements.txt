@@ -1,0 +1,5 @@
+numpy
+pandas
+matplotlib
+scipy        # optional: constrained refinement in the scattering auto-fit
+tkinterdnd2  # optional: drag-and-drop of files
