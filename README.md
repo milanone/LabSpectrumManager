@@ -15,9 +15,77 @@ averaging, smoothing (boxcar or Savitzky-Golay) and multi-peak deconvolution
 | `.dsp` | UV-Vis (binary) | native parser |
 | `.sp` | FTIR PerkinElmer (binary) | native parser (no external tool required) |
 | `.csv` | UV-Vis or FTIR | type auto-detected from the X-axis values |
+| `.csv` | UV-Vis (BMG plate reader) | absorbance spectra per well; detected from the header — see [BMG plate-reader CSV](#bmg-plate-reader-csv) |
 
 Support for other instrument/vendor-specific formats can be added on request — open an issue with
 a sample file.
+
+## BMG plate-reader CSV
+
+A `.csv` exported by a **BMG** microplate reader (the sample files came from a BMG Omega, with
+the data folder `...\BMG\Omega\User\Data` in the header) holding **absorbance spectra, one per
+well**. It is recognised by `Test run no.:` in the first lines and read by `_leggi_csv_bmg()`.
+Tests: `tests/test_bmg_reader.py`.
+
+### File layout
+
+Text file, `;` separator, CRLF line ends, `.` as decimal separator in the files seen so far. One
+row of metadata per line, then the table:
+
+```
+User: USER;Path: C:\...\BMG\Omega\User\Data;Test run no.: 459
+Test name: 350_1000_sp;Date: 03/07/2025;Time: 17:02:38
+                                                   <- blank line
+ID1: <experiment name>;                            <- line 4
+Absorbance spectrum
+                                                   <- blank line
+Raw Data  (Abs Spectrum)#                          <- or "Blank corrected based on Raw Data   (Abs Spectrum)#"
+                                                   <- blank line
+ Well; Content; 1 - 1; 1 - 1; ...                  <- one "1 - 1" per wavelength (ignored)
+;Wavelength [nm];350;351;352;...;1000;             <- 651 points, 1 nm step in the sample
+A01;Blank B;0.322;0.320;...                        <- one row per well: id; content; one value per wavelength
+A02;Sample X1;0.384;0.381;...
+```
+
+Every table row — the `Well; Content` row, the `Wavelength` row and the data rows — ends with a
+trailing `;`, so each has `2 + number of wavelengths + 1` fields (654 for 651 wavelengths).
+The metadata lines have no fixed position apart from being above the `;Wavelength [nm]` row:
+the reader looks for that row instead of counting lines.
+
+### Raw and blank-corrected exports
+
+The same run can be exported twice:
+
+- **Raw data** — every well has its values, including the `Blank` wells.
+- **Blank corrected** — the `Blank` rows are **present but empty** (all fields blank), and each
+  sample is `sample − mean of all the blank wells` (the mean over the blank wells of the whole
+  plate, *not* the blank in the same row: for sample `A02` the blank `A01` alone gives a
+  different result). Checked on one export (3 samples, 3 blanks, 350–1000 nm): subtracting the
+  mean of the raw blanks reproduces the software's corrected values to within 0.001, i.e. the
+  3-decimal rounding of the file. So the raw file is enough to obtain the corrected spectra.
+
+### How LabSpectrumManager reads it
+
+- Each well with data becomes one spectrum, named `<file name>_<well>` (e.g. `run_A02`); the
+  well content (`Sample X1`), experiment name (`ID1`), test name and run number, date and time,
+  the "Raw Data / Blank corrected" line and the instrument appear in the metadata panel.
+- Spectra are typed **UV-Vis** (X axis in nm).
+- **Raw file with `Blank` wells:** a dialog asks whether to subtract the mean of the blanks. *Yes*
+  loads only the samples, already corrected; *No* loads samples and blanks as they are.
+- **Blank-corrected file:** the empty blank rows are skipped, nothing is asked.
+- Empty cells are dropped; a decimal comma is accepted; the file is read as `latin-1` like the
+  other CSV readers.
+- A well whose content starts with `Blank` is treated as a blank, anything else as a sample. If a
+  file contains only blanks they are loaded as ordinary spectra.
+
+### Limits
+
+Only one export has been inspected, with a single plate, a single measurement per well and only the
+contents `Sample` and `Blank`. Not covered, because they were never seen: other well types
+(standards, controls — they would be loaded as samples), several plates or repeated cycles in one
+file, fluorescence or luminescence exports (the header says `Absorbance spectrum`), and a Time
+or Date written in another locale format (shown as found). If a file does not load, send the first
+10–15 lines of the export — the header and two data rows are enough to adapt the reader.
 
 ## Dependencies
 
@@ -99,3 +167,5 @@ export — see Dependencies.
 - `old version and side projects/` — earlier versions (v0-v2) and side projects
   (`scattering.pyw`, `spc_plotter.pyw`) kept as historical reference
 - `test_sp_reader.py` — test for the native `.sp` parser (FTIR PerkinElmer)
+- `tests/test_bmg_reader.py` — unit tests for the BMG plate-reader CSV reader (synthetic files;
+  run with `python -m unittest discover -s tests -v`)
