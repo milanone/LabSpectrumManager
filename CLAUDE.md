@@ -5,10 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Running the Application
 
 ```bash
-# Via Windows batch launcher (passes optional file path arg)
-LabSpectrumManager.bat [optional_spectrum_file]
-
-# Direct Python (headless/no console window)
+# Headless / no console window
 pythonw LabSpectrumManager.pyw [optional_spectrum_file]
 ```
 
