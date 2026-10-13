@@ -8,7 +8,7 @@ import datetime
 import pickle
 import traceback
 import tkinter as tk
-from tkinter import filedialog, scrolledtext, messagebox, simpledialog, Listbox, ttk
+from tkinter import filedialog, scrolledtext, messagebox, Listbox, ttk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import pandas as pd
 
@@ -3850,12 +3850,45 @@ class LabSpectrumManager:
         menu.add_command(label="Move to bottom", command=lambda: self._sposta_spettri(names, 'bottom'))
         menu.tk_popup(event.x_root, event.y_root)
 
+    def _chiedi_nome(self, titolo, prompt, iniziale):
+        """Finestra modale con un campo di testo largo (simpledialog.askstring ha un campo di
+        ~20 caratteri fisso, troppo stretto per i nomi degli spettri). Restituisce None se annullata."""
+        dlg = tk.Toplevel(self.root)
+        dlg.title(titolo)
+        dlg.transient(self.root)
+        dlg.resizable(True, False)
+        risultato = []
+        tk.Label(dlg, text=prompt, anchor='w').pack(fill=tk.X, padx=12, pady=(12, 2))
+        var = tk.StringVar(value=iniziale)
+        entry = tk.Entry(dlg, textvariable=var, width=70)
+        entry.pack(fill=tk.X, padx=12, pady=2)
+
+        def ok(*_):
+            risultato.append(var.get())
+            dlg.destroy()
+
+        btn = tk.Frame(dlg)
+        btn.pack(fill=tk.X, padx=12, pady=12)
+        tk.Button(btn, text="Cancel", width=10, command=dlg.destroy).pack(side=tk.RIGHT, padx=(6, 0))
+        tk.Button(btn, text="OK", width=10, command=ok).pack(side=tk.RIGHT)
+        dlg.bind('<Return>', ok)
+        dlg.bind('<Escape>', lambda e: dlg.destroy())
+        dlg.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - dlg.winfo_reqwidth()) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - dlg.winfo_reqheight()) // 3
+        dlg.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        entry.focus_set()
+        entry.select_range(0, tk.END)
+        dlg.grab_set()
+        self.root.wait_window(dlg)
+        return risultato[0] if risultato else None
+
     def _rinomina_spettro(self, old):
         pannello = self._pannello_attivo()
         if pannello:
             messagebox.showwarning("Rename", f"Chiudi prima il pannello {pannello} (Apply o Cancel).")
             return
-        new = simpledialog.askstring("Rename", "New name:", initialvalue=old, parent=self.root)
+        new = self._chiedi_nome("Rename", "New name:", old)
         if new is None:
             return
         new = new.strip()
