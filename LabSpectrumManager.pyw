@@ -145,6 +145,7 @@ class LabSpectrumManager:
         # Stato pannello shift/scale (traslazione verticale e fattore moltiplicativo)
         self._ss_names = []
         self._ss_lines = {}
+        self._ss_ref_y = []   # valori Y degli spettri di riferimento (per i limiti dell'asse)
 
         # Stato pannello deconvoluzione (lorentziane)
         self._dc_name   = None
@@ -2040,9 +2041,21 @@ class LabSpectrumManager:
             self.ax.set_ylabel("Absorbance")
         self.ax.grid(True, linestyle=':', alpha=0.6)
 
+        # Gli altri spettri visibili (stesso tipo) restano disegnati fermi come riferimento, con il
+        # colore che hanno nella vista normale: lo scopo è riscalare uno spettro rispetto a un altro.
         colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
-        for i, name in enumerate(names):
-            color = colors[i % len(colors)]
+        visibili = [n for n in self.spectra if n not in self._hidden_spectra]
+        self._ss_ref_y = []
+        for i, name in enumerate(visibili):
+            if name in names or self.spectra[name]['info']['Type'] != tipo:
+                continue
+            df = self.spectra[name]['df']
+            y = df[name].to_numpy(dtype=float)
+            self.ax.plot(df.index.to_numpy(dtype=float), y, color=colors[i % len(colors)],
+                         lw=1.5, label=name)
+            self._ss_ref_y.extend(y[np.isfinite(y)])
+        for name in names:
+            color = colors[visibili.index(name) % len(colors)] if name in visibili else colors[0]
             df = self.spectra[name]['df']
             x = df.index.to_numpy(dtype=float)
             y = df[name].to_numpy(dtype=float)
@@ -2073,7 +2086,7 @@ class LabSpectrumManager:
         if par is None:
             return
         factor, offset = par
-        all_y = []
+        all_y = list(self._ss_ref_y)
         for name in self._ss_names:
             y = self.spectra[name]['df'][name].to_numpy(dtype=float) * factor + offset
             self._ss_lines[f'{name}_new'].set_ydata(y)
