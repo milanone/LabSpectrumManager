@@ -116,6 +116,10 @@ the table scrolls both ways once there are more columns or rows than fit. Select
 Shift/Ctrl to extend, Ctrl+A for all) and Ctrl+C — or right-click — to copy them, header included,
 tab-separated, ready to paste into Excel/Origin.
 
+Right-click a spectrum in the list to **rename** it or to **move** it (up, down, top, bottom; several
+selected spectra move together). The list order is the order of the graph colours and of the columns in
+`File → Export CSV`. Rename and move are not available while an operation panel is open.
+
 Any spectrum can be hidden from the graph (Hide Selected / Show Selected, or right-click in the
 list) without removing it — it stays in the list (greyed out), data table and metadata, just off
 the plot. Closing the app (window close button or `File → Exit`) asks for confirmation if there

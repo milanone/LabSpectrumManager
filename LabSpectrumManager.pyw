@@ -8,7 +8,7 @@ import datetime
 import pickle
 import traceback
 import tkinter as tk
-from tkinter import filedialog, scrolledtext, messagebox, Listbox, ttk
+from tkinter import filedialog, scrolledtext, messagebox, simpledialog, Listbox, ttk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import pandas as pd
 
@@ -3841,7 +3841,82 @@ class LabSpectrumManager:
                          command=lambda: self._nascondi_spettri(names))
         menu.add_command(label="Show" if len(names) == 1 else f"Show {len(names)} spectra",
                          command=lambda: self._mostra_spettri(names))
+        menu.add_separator()
+        menu.add_command(label="Rename...", state=tk.NORMAL if len(names) == 1 else tk.DISABLED,
+                         command=lambda: self._rinomina_spettro(names[0]))
+        menu.add_command(label="Move up", command=lambda: self._sposta_spettri(names, 'up'))
+        menu.add_command(label="Move down", command=lambda: self._sposta_spettri(names, 'down'))
+        menu.add_command(label="Move to top", command=lambda: self._sposta_spettri(names, 'top'))
+        menu.add_command(label="Move to bottom", command=lambda: self._sposta_spettri(names, 'bottom'))
         menu.tk_popup(event.x_root, event.y_root)
+
+    def _rinomina_spettro(self, old):
+        pannello = self._pannello_attivo()
+        if pannello:
+            messagebox.showwarning("Rename", f"Chiudi prima il pannello {pannello} (Apply o Cancel).")
+            return
+        new = simpledialog.askstring("Rename", "New name:", initialvalue=old, parent=self.root)
+        if new is None:
+            return
+        new = new.strip()
+        if not new or new == old:
+            return
+        if new in self.spectra:
+            messagebox.showwarning("Rename", f"Esiste già uno spettro chiamato '{new}'.")
+            return
+        # Ricostruisce il dizionario per non cambiare la posizione dello spettro (l'ordine
+        # è quello dell'export CSV); il nome è anche l'intestazione della colonna del DataFrame.
+        rinominato = {}
+        for name, d in self.spectra.items():
+            if name == old:
+                d['df'] = d['df'].rename(columns={old: new})
+                if d['info'].get('Sample') == old:
+                    d['info']['Sample'] = new
+                rinominato[new] = d
+            else:
+                rinominato[name] = d
+        self.spectra = rinominato
+        if old in self._hidden_spectra:
+            self._hidden_spectra.discard(old)
+            self._hidden_spectra.add(new)
+        self._dirty = True
+        self.aggiorna_vista()
+        self._seleziona_nomi([new])
+
+    def _sposta_spettri(self, names, direzione):
+        """Riordina self.spectra (l'ordine è quello di lista, grafico ed export CSV). Con più
+        spettri selezionati si spostano insieme, mantenendo il loro ordine relativo."""
+        pannello = self._pannello_attivo()
+        if pannello:
+            messagebox.showwarning("Move", f"Chiudi prima il pannello {pannello} (Apply o Cancel).")
+            return
+        items = list(self.spectra)
+        sel = set(names)
+        if direzione == 'top':
+            items = [n for n in items if n in sel] + [n for n in items if n not in sel]
+        elif direzione == 'bottom':
+            items = [n for n in items if n not in sel] + [n for n in items if n in sel]
+        elif direzione == 'up':
+            for i in range(1, len(items)):
+                if items[i] in sel and items[i - 1] not in sel:
+                    items[i - 1], items[i] = items[i], items[i - 1]
+        else:
+            for i in range(len(items) - 2, -1, -1):
+                if items[i] in sel and items[i + 1] not in sel:
+                    items[i + 1], items[i] = items[i], items[i + 1]
+        if items == list(self.spectra):
+            return
+        self.spectra = {n: self.spectra[n] for n in items}
+        self._dirty = True
+        self.aggiorna_vista()
+        self._seleziona_nomi(names)
+
+    def _seleziona_nomi(self, names):
+        """Riseleziona in lista gli spettri indicati (aggiorna_vista() azzera la selezione)."""
+        self.file_listbox.selection_clear(0, tk.END)
+        for i in range(self.file_listbox.size()):
+            if self.file_listbox.get(i) in names:
+                self.file_listbox.selection_set(i)
 
     def _nascondi_spettri(self, names):
         self._hidden_spectra.update(names)

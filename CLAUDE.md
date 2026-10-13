@@ -84,6 +84,12 @@ Loaded spectra are stored in `self.spectra` (dict):
   selected spectra (same type required), live preview, result saved as new `<name>_ss` spectra with
   `Factor`/`Offset` in the metadata. The multiplication happens before the offset is added, so the
   offset is in the final Y units
+- `_listbox_tasto_destro()` also offers Rename (`_rinomina_spettro()`, one spectrum) and Move up/down/top/
+  bottom (`_sposta_spettri()`). The order of `self.spectra` is the order of the list, graph colours and
+  CSV export columns, so reordering rebuilds the dict; renaming rebuilds it too (keeps position) and
+  must also rename the DataFrame column, `info['Sample']` (if equal to the old name) and the
+  `_hidden_spectra` entry. Both refuse to run while an operation panel is open, because panels
+  hold spectrum names
 - `aggiorna_vista()` — refreshes all three panels after any data change; auto-selects the
   listbox entry when exactly one spectrum is loaded, so single-selection tools (Trim,
   Smoothing, Deconvolution, ...) work without an explicit click first
