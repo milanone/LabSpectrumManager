@@ -80,6 +80,10 @@ Loaded spectra are stored in `self.spectra` (dict):
   0.0): a derivative taken with the minimal window is almost pure noise, unlike a lightly-smoothed
   spectrum, so starting near "no smoothing" like Smoothing does would make the first thing the user
   sees look broken
+- `apri_shift_scale()` / `_ss_applica()` — Shift / Scale panel: `Y_new = Y * Factor + Offset` on all
+  selected spectra (same type required), live preview, result saved as new `<name>_ss` spectra with
+  `Factor`/`Offset` in the metadata. The multiplication happens before the offset is added, so the
+  offset is in the final Y units
 - `aggiorna_vista()` — refreshes all three panels after any data change; auto-selects the
   listbox entry when exactly one spectrum is loaded, so single-selection tools (Trim,
   Smoothing, Deconvolution, ...) work without an explicit click first

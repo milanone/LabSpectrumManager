@@ -142,6 +142,10 @@ class LabSpectrumManager:
         self._dv_y     = None
         self._dv_lines = {}
 
+        # Stato pannello shift/scale (traslazione verticale e fattore moltiplicativo)
+        self._ss_names = []
+        self._ss_lines = {}
+
         # Stato pannello deconvoluzione (lorentziane)
         self._dc_name   = None
         self._dc_x      = None
@@ -309,6 +313,9 @@ class LabSpectrumManager:
         tk.Button(self.f_right_inner, text="Derivative",
                   command=self.apri_derivata,
                   bg='#d1c4e9', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(4, 0))
+        tk.Button(self.f_right_inner, text="Shift / Scale",
+                  command=self.apri_shift_scale,
+                  bg='#f8bbd0', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(4, 0))
 
         # --- PANNELLO METADATA (visibile per default) ---
         self.f_metadata = tk.Frame(self.f_right_inner, bg='#f0f4f7')
@@ -361,6 +368,11 @@ class LabSpectrumManager:
         self.f_derivative = tk.Frame(self.f_right_inner, bg='#f0f4f7')
         # non packed — appare solo quando attivato
         self._costruisci_pannello_derivata()
+
+        # --- PANNELLO SHIFT / SCALE (nascosto per default) ---
+        self.f_shiftscale = tk.Frame(self.f_right_inner, bg='#f0f4f7')
+        # non packed — appare solo quando attivato
+        self._costruisci_pannello_shift_scale()
 
         self.paned.add(self.f_right, width=400)
 
@@ -1959,6 +1971,167 @@ class LabSpectrumManager:
         self.f_derivative.pack_forget()
         self.f_metadata.pack(fill=tk.BOTH, expand=True)
 
+    # --- PANNELLO SHIFT / SCALE: costruzione widget ---
+    def _costruisci_pannello_shift_scale(self):
+        bg = '#f0f4f7'
+
+        tk.Label(self.f_shiftscale, text="SHIFT / SCALE",
+                 font=('Arial', 10, 'bold'), bg=bg).pack(pady=(15, 2))
+        self._ss_label_nomi = tk.Label(self.f_shiftscale, text="",
+                                       font=('Consolas', 9, 'italic'),
+                                       bg=bg, wraplength=360, justify='left')
+        self._ss_label_nomi.pack(padx=10)
+
+        ctrl = tk.Frame(self.f_shiftscale, bg=bg)
+        ctrl.pack(fill=tk.X, padx=10, pady=8)
+        self._ss_factor_var = tk.StringVar(value='1')
+        self._ss_offset_var = tk.StringVar(value='0')
+        for label, var in (('Factor', self._ss_factor_var), ('Offset', self._ss_offset_var)):
+            row = tk.Frame(ctrl, bg=bg)
+            row.pack(fill=tk.X, pady=4)
+            tk.Label(row, text=label, width=7, anchor='w', bg=bg,
+                     font=('Consolas', 10)).pack(side=tk.LEFT)
+            tk.Entry(row, textvariable=var, width=12,
+                     font=('Consolas', 10)).pack(side=tk.LEFT, padx=4)
+            var.trace_add('write', self._ss_aggiorna_preview)
+
+        tk.Label(self.f_shiftscale, text="Y_new = Y × Factor + Offset",
+                 font=('Consolas', 8), bg=bg, fg='#555555').pack(padx=10)
+        self._ss_info = tk.Label(self.f_shiftscale, text="", font=('Consolas', 8),
+                                 bg=bg, fg='#555555', wraplength=360, justify='left')
+        self._ss_info.pack(padx=10, pady=(2, 4))
+
+        btn = tk.Frame(self.f_shiftscale, bg=bg)
+        btn.pack(fill=tk.X, padx=10, pady=10)
+        tk.Button(btn, text="Apply", command=self._ss_applica,
+                  bg='#2ecc71', fg='white', font=('Arial', 9, 'bold')).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+        tk.Button(btn, text="Cancel", command=self._ss_annulla).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+
+    # --- SHIFT / SCALE: apertura pannello ---
+    def apri_shift_scale(self):
+        sel = self._selezione_effettiva()
+        if not sel:
+            messagebox.showwarning("Shift / Scale", "Select at least one spectrum.")
+            return
+        names = [self.file_listbox.get(i) for i in sel]
+        types = {self.spectra[n]['info']['Type'] for n in names}
+        if len(types) > 1:
+            messagebox.showwarning("Shift / Scale", f"The selected spectra have different types: {', '.join(types)}.")
+            return
+        tipo = next(iter(types))
+        self._ss_names = names
+        self._ss_label_nomi.config(text=', '.join(names))
+        self._ss_factor_var.set('1')
+        self._ss_offset_var.set('0')
+
+        self.ax.clear()
+        self.v_line = self.v_text = None
+        if tipo == 'FTIR':
+            self.ax.set_xlabel("Wavenumber (cm⁻¹)")
+            self.ax.set_ylabel(self._ftir_ylabel(names))
+        elif tipo == 'Raman':
+            self.ax.set_xlabel("Raman shift (cm⁻¹)")
+            self.ax.set_ylabel("Intensity (A.U.)")
+        elif tipo == 'Fluorescence':
+            self.ax.set_xlabel("Wavelength (nm)")
+            self.ax.set_ylabel("Intensity (A.U.)")
+        else:
+            self.ax.set_xlabel("Wavelength (nm)")
+            self.ax.set_ylabel("Absorbance")
+        self.ax.grid(True, linestyle=':', alpha=0.6)
+
+        colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+        for i, name in enumerate(names):
+            color = colors[i % len(colors)]
+            df = self.spectra[name]['df']
+            x = df.index.to_numpy(dtype=float)
+            y = df[name].to_numpy(dtype=float)
+            self._ss_lines[f'{name}_orig'], = self.ax.plot(x, y, color=color, alpha=0.25, lw=1.2, ls='--')
+            self._ss_lines[f'{name}_new'], = self.ax.plot(x, y, color=color, lw=1.8, label=f'{name}_ss')
+        self.ax.legend(fontsize=8)
+        if tipo == 'FTIR':
+            self.ax.invert_xaxis()
+        self.canvas.draw()
+
+        self.f_metadata.pack_forget()
+        self.f_shiftscale.pack(fill=tk.BOTH, expand=True)
+
+    # --- SHIFT / SCALE: legge i parametri (None se non numerici) ---
+    def _ss_parametri(self):
+        try:
+            factor = float(self._ss_factor_var.get().replace(',', '.'))
+            offset = float(self._ss_offset_var.get().replace(',', '.'))
+        except ValueError:
+            return None
+        return factor, offset
+
+    # --- SHIFT / SCALE: preview live ---
+    def _ss_aggiorna_preview(self, *_):
+        if not self._ss_names or not self._ss_lines:
+            return
+        par = self._ss_parametri()
+        if par is None:
+            return
+        factor, offset = par
+        all_y = []
+        for name in self._ss_names:
+            y = self.spectra[name]['df'][name].to_numpy(dtype=float) * factor + offset
+            self._ss_lines[f'{name}_new'].set_ydata(y)
+            orig = self._ss_lines[f'{name}_orig'].get_ydata()
+            all_y.extend(y[np.isfinite(y)])
+            all_y.extend(orig[np.isfinite(orig)])
+        self._ss_info.config(text=f"Factor {factor:g}, offset {offset:g}")
+        if all_y:
+            mn, mx = min(all_y), max(all_y)
+            margin = (mx - mn) * 0.05 or 0.05
+            self.ax.set_ylim(mn - margin, mx + margin)
+        self.canvas.draw_idle()
+
+    # --- SHIFT / SCALE: applica (nuovi spettri, gli originali restano intatti) ---
+    def _ss_applica(self):
+        par = self._ss_parametri()
+        if par is None:
+            messagebox.showwarning("Shift / Scale", "Enter numeric values for Factor and Offset.")
+            return
+        factor, offset = par
+        if factor == 1 and offset == 0:
+            messagebox.showwarning("Shift / Scale", "Factor 1 and offset 0 leave the spectrum unchanged.")
+            return
+        for name in self._ss_names:
+            df = self.spectra[name]['df']
+            y = self._round_sig(df[name].to_numpy(dtype=float) * factor + offset, sig=6)
+            new_name = f"{name}_ss"
+            final_name = new_name
+            counter = 2
+            while final_name in self.spectra:
+                final_name = f"{new_name}_{counter}"
+                counter += 1
+            new_info = dict(self.spectra[name]['info'])
+            new_info['Sample']    = final_name
+            new_info['Source']    = name
+            new_info['Operation'] = 'Shift / Scale'
+            new_info['Factor']    = f"{factor:g}"
+            new_info['Offset']    = f"{offset:g}"
+            self.spectra[final_name] = {
+                'df':   pd.DataFrame({final_name: y}, index=df.index),
+                'info': new_info,
+            }
+            self._dirty = True
+        self._ss_chiudi_pannello()
+        self.aggiorna_vista()
+
+    # --- SHIFT / SCALE: annulla ---
+    def _ss_annulla(self):
+        self._ss_chiudi_pannello()
+        self.aggiorna_vista()
+
+    # --- SHIFT / SCALE: chiude il pannello ---
+    def _ss_chiudi_pannello(self):
+        self._ss_names = []
+        self._ss_lines = {}
+        self.f_shiftscale.pack_forget()
+        self.f_metadata.pack(fill=tk.BOTH, expand=True)
+
     # --- PANNELLO DECONVOLUZIONE: costruzione widget ---
     @staticmethod
     def _lorentzian(x, A, x0, w):
@@ -2682,7 +2855,8 @@ class LabSpectrumManager:
         return (self._sc_name is not None or self._sub_name_a is not None or self._norm_names
                 or self._bl_name is not None or self._ab_name is not None
                 or self._sm_name is not None or self._dc_name is not None
-                or self._tr_name is not None or self._dv_name is not None)
+                or self._tr_name is not None or self._dv_name is not None
+                or self._ss_names)
 
     def _cursor_best_position(self):
         """Sceglie l'angolo del grafico con minor densità di punti tracciati nelle
@@ -3747,6 +3921,8 @@ class LabSpectrumManager:
             return "Trim"
         if self._dv_name is not None:
             return "Derivative"
+        if self._ss_names:
+            return "Shift / Scale"
         return None
 
     def remove_selected(self):

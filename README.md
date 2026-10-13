@@ -154,6 +154,9 @@ export — see Dependencies.
 - **Derivative** — 1st or 2nd derivative via Savitzky-Golay (exact derivative of a local
   polynomial fit, in real X units), with the same adjustable smoothing/polynomial-order controls
   as Smoothing, useful for resolving overlapping bands or removing a sloping baseline.
+- **Shift / Scale** — vertical translation and/or multiplication by an arbitrary factor
+  (`Y_new = Y × Factor + Offset`) of one or more selected spectra, with live preview; the result is
+  stored as new `_ss` spectra and the originals are left untouched.
 - **Deconvolution** — interactive multi-peak fit (click to add/remove a peak) with a
   Lorentzian, Gaussian or pseudo-Voigt profile; the fit is restricted to a window settable by
   dragging its two boundary lines or typing exact values, same as Trim below.
