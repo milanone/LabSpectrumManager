@@ -3146,9 +3146,10 @@ class LabSpectrumManager:
             if m.group(2) != 'f':
                 params.setdefault(m.group(1).strip(), m.group(2).strip())
         try:
-            start = float(params['Start (nm)'])
-            stop = float(params['Stop (nm)'])
-            step = float(params['UV-Vis Data Interval (nm)'])
+            # files saved on a machine with a decimal-comma locale write '1000,000'
+            start = float(params['Start (nm)'].replace(',', '.'))
+            stop = float(params['Stop (nm)'].replace(',', '.'))
+            step = float(params['UV-Vis Data Interval (nm)'].replace(',', '.'))
         except (KeyError, ValueError):
             raise ValueError("Parametri Start/Stop/Data Interval non trovati nel file .DSW")
         n = int(round(abs(stop - start) / step)) + 1
@@ -3170,12 +3171,12 @@ class LabSpectrumManager:
         order = np.argsort(x)
         x, y = x[order], y[order]
 
-        coll = re.search(r'Collection Time:\s*(\d{2}/\d{2}/\d{2})\s+(\d{2}:\d{2})', text)
+        coll = re.search(r'Collection Time:\s*(\d{2})[./](\d{2})[./](\d{2})\s+(\d{2}:\d{2})', text)
         name = os.path.splitext(os.path.basename(path))[0]
         info = {
             'Sample':     name,
             'File':       os.path.basename(path),
-            'Date':       f"{coll.group(2)} {coll.group(1)}" if coll else 'N/D',
+            'Date':       f"{coll.group(4)} {coll.group(1)}/{coll.group(2)}/{coll.group(3)}" if coll else 'N/D',
             'Type':       'UV-Vis',
             'Instrument': 'Varian ' + params.get('Instrument', 'Cary'),
             'Y Mode':     params.get('Y Mode', 'N/D'),
@@ -3189,7 +3190,7 @@ class LabSpectrumManager:
                          ('Baseline Correction', 'Baseline Correction'),
                          ('Comments', 'Comments')):
             if params.get(src):
-                info[dst] = params[src]
+                info[dst] = params[src].replace(',', '.') if src != 'Comments' else params[src]
         self.spectra[name] = {'df': pd.DataFrame({'x': x, name: y}).set_index('x'), 'info': info}
 
     def leggi_sp(self, path):
