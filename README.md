@@ -150,7 +150,10 @@ export — see Dependencies.
   `VS · (λ/1000)^-P − M·λ + Offset`, with a constrained auto-fit (SLSQP) over the whole spectrum
   by default: the power term models Rayleigh (P≈4, small particles) to Mie (P down to 1, large
   particles) scattering, the linear term covers residual baseline drift unrelated to scattering
-  and is fixed at zero unless unlocked. Theory and operating procedure in
+  and is fixed at zero unless unlocked. The panel shows the equation with the current (or fitted)
+  parameters in place of the symbols, the residual of the last auto-fit, and a *Copy equation*
+  button (form and parameters, ready for a report); the corrected spectrum keeps the parameters and
+  the equation (`Scatter equation`, full precision) in its metadata. Theory and operating procedure in
   [`scattering_correction_theory.md`](scattering_correction_theory.md).
 - **Linear baseline** (FTIR) — a two-anchor baseline, draggable on the graph, for FTIR spectra.
 - **Adaptive baseline** — a lower envelope via iterated moving averages with a minimum

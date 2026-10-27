@@ -78,6 +78,12 @@ Loaded spectra are stored in `self.spectra` (dict):
   in its right-click menu) copy the selected rows (header included, tab-separated) to the
   clipboard, replacing the old Text widget's native select-all-and-copy now that it's a Treeview.
   Selecting nothing and pressing Ctrl+C is a no-op (leaves the clipboard untouched)
+- Scattering equation: `SCATTER_FORM` (the model as text) and `scatter_equation(VS, P, M, OFF)` (the same with the parameters,
+  signs folded into the operators) are module-level and the single place where the formula is written as text; the panel
+  shows them (`_sc_eq_label`, refreshed by `_sc_aggiorna_preview()`), `_sc_auto()` adds the window, point count and rms residual
+  (`_sc_fit_label`), `_sc_copia_equazione()` fills the clipboard and `_sc_applica()` stores `info['Scatter equation']` next to
+  the older low-precision `Scatter VS/P/Slope/Offset` keys. If the model in `_sc_aggiorna_preview()` changes, change the text
+  too: `tests/test_scatter_equation.py` evaluates the text against the model
 - `apri_derivata()` / `_dv_derivata()` — 1st/2nd derivative via `_savgol(..., deriv=1|2, dx=...)`
   (see below); `dx` is `median(abs(diff(x)))`, always positive regardless of whether the spectrum's
   index happens to run ascending or descending, so the derivative's sign follows increasing X by

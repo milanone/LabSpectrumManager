@@ -107,6 +107,19 @@ if psk is not None:
 # ---- end of the PlotStyleKit bootstrap ----
 
 
+# Scattering model subtracted from a UV-Vis spectrum (wavelength in nm); the one place where it is written as text.
+SCATTER_FORM = "A_corr(λ) = A(λ) − [ VS·(λ/1000)^(−P) − m·λ + Offset ]"
+
+
+def scatter_equation(VS, P, M, OFF):
+    """The fitted scattering term as text, with the optimised parameters in place of the symbols
+    (signs folded into the operators, so negative values do not read '+ -0.02')."""
+    def term(v, tail):
+        return f" {'−' if v < 0 else '+'} {abs(v):.6g}{tail}"
+    return (f"Scatter(λ) = {VS:.6g}·(λ/1000)^(−{P:.4g})"
+            + term(-M, "·λ") + term(OFF, "") + "   (λ in nm)")
+
+
 class LabSpectrumManager:
     def __init__(self, root):
         self.root = root
@@ -469,6 +482,18 @@ class LabSpectrumManager:
         tk.Checkbutton(preset, text='fix P', variable=self._sc_P_lock, bg=bg,
                        font=('Consolas', 8)).pack(side=tk.LEFT, padx=(10, 0))
 
+        # The equation: the form (what is subtracted) and the same with the current parameters
+        tk.Label(self.f_scattering, text=SCATTER_FORM, font=('Consolas', 8), bg=bg,
+                 wraplength=360, justify=tk.LEFT).pack(padx=10, pady=(6, 0), anchor='w')
+        self._sc_eq_label = tk.Label(self.f_scattering, text="", font=('Consolas', 8), bg=bg, fg='#1f3b57',
+                                     wraplength=360, justify=tk.LEFT)
+        self._sc_eq_label.pack(padx=10, pady=(2, 0), anchor='w')
+        self._sc_fit_label = tk.Label(self.f_scattering, text="", font=('Consolas', 8), bg=bg, fg='#555555',
+                                      wraplength=360, justify=tk.LEFT)
+        self._sc_fit_label.pack(padx=10, anchor='w')
+        tk.Button(self.f_scattering, text="Copy equation", command=self._sc_copia_equazione,
+                  font=('Arial', 8)).pack(padx=10, pady=(2, 0), anchor='w')
+
         # Range label + pulsante Auto
         self._sc_range_label = tk.Label(self.f_scattering, text="Fit range: —",
                                         font=('Consolas', 8), bg='#f0f4f7', fg='#555555')
@@ -606,6 +631,8 @@ class LabSpectrumManager:
             self.canvas.mpl_connect('button_release_event', self._sc_drag_stop),
         ]
         self._sc_aggiorna_range_label()
+        self._sc_fit_label.config(text="")
+        self._sc_aggiorna_preview()
         self.canvas.draw()
 
         # Rileva zoom/pan dell'utente per non sovrascriverlo durante la preview.
@@ -633,6 +660,7 @@ class LabSpectrumManager:
                          self._sc_M['value'].get(), self._sc_OFF['value'].get())
         correction = VS * (self._sc_x / 1000.0) ** -P - M * self._sc_x + OFF
         y_corr = self._sc_y - correction
+        self._sc_eq_label.config(text=scatter_equation(VS, P, M, OFF))
         self._sc_lines['corr'].set_ydata(correction)
         self._sc_lines['res'].set_ydata(y_corr)
         # Autoscale solo finché l'utente non ha zoomato: così lo zoom viene preservato
@@ -745,6 +773,22 @@ class LabSpectrumManager:
             self._linked_set(self._sc_M, round(float(M_fit), 8))
         if not lock_P:
             self._linked_set(self._sc_P, round(P_fit, 3))
+        # how well the trace follows the spectrum in the window (the trace stays at or below it by construction)
+        corr_win = VS_fit * (x_ref / 1000.0) ** -P_fit - M_fit * x_ref + OFF_fit
+        rmse = float(np.sqrt(np.mean((y_ref - corr_win) ** 2)))
+        self._sc_fit_label.config(
+            text=f"Auto fit {x_lo:.1f}–{x_hi:.1f} nm, {len(x_ref)} points, rms residual {rmse:.3g}; "
+                 f"P {'fixed' if lock_P else 'optimised'}, slope {'fixed' if lock_M else 'optimised'}")
+
+    def _sc_copia_equazione(self):
+        """Copy the form and the current parameters to the clipboard, ready to paste into a report."""
+        VS, P, M, OFF = (self._sc_VS['value'].get(), self._sc_P['value'].get(),
+                         self._sc_M['value'].get(), self._sc_OFF['value'].get())
+        text = (f"{SCATTER_FORM}\n{scatter_equation(VS, P, M, OFF)}\n"
+                f"VS = {VS:.6g}, P = {P:.4g}, m = {M:.6g}, Offset = {OFF:.6g}")
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.root.update()
 
     # --- SCATTERING: drag delle linee verticali ---
     def _sc_aggiorna_range_label(self):
@@ -796,6 +840,7 @@ class LabSpectrumManager:
         new_info['Scatter P']      = str(P)
         new_info['Scatter Slope']  = f"{M:.6f}"
         new_info['Scatter Offset'] = f"{OFF:.3f}"
+        new_info['Scatter equation'] = scatter_equation(VS, P, M, OFF)   # full precision, unlike the keys above
         self.spectra[new_name] = {
             'df':   pd.DataFrame({'x': self._sc_x, new_name: y_corr}).set_index('x'),
             'info': new_info,
