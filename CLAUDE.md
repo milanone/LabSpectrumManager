@@ -58,6 +58,7 @@ Loaded spectra are stored in `self.spectra` (dict):
 | Extension | Type | Method |
 |-----------|------|--------|
 | `.dsp` | UV-Vis binary | `leggi_dsp()` — parses binary: wavelength range + point count + Y values |
+| `.dsw` | UV-Vis (Varian Cary WinUV) | `leggi_dsw()` — MFC-serialized `TContinuumStore`; data = consecutive float32 (X, Y) pairs located by searching the Start wavelength and validated against the Data Interval; point count from the 'Parameter List' text. Verified on one Cary 500 absorbance scan (Y matches the stored peak labels); first trace only |
 | `.sp` | FTIR PerkinElmer | `leggi_sp()` — native binary parser (magic `PEPE`, `DSet2DC1DI` blocks), no external tool |
 | `.spc` | Fluorescence (Shimadzu RF-5301) or UV-Vis (Shimadzu UV-1900/UVProbe) | `leggi_spc()` — flat binary for RF-5301; if the file starts with the OLE2 signature `D0CF11E0`, dispatches to `leggi_spc_uvprobe()` (uses the native mini OLE reader `_ole_streams()`; X/Y are float64 streams, X stored descending and re-sorted). UV-1900 verified on one absorbance file only |
 | `.csv` | UV-Vis or FTIR | `leggi_csv()` — auto-detects type by threshold: max value > 2000 → FTIR wavenumbers |

@@ -178,7 +178,7 @@ class LabSpectrumManager:
         # --- MENU ---
         self.menu_bar = tk.Menu(root)
         self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.file_menu.add_command(label="Open Files (.dsp, .sp, .spc, .csv)", command=self.carica_da_dialog)
+        self.file_menu.add_command(label="Open Files (.dsp, .dsw, .sp, .spc, .csv)", command=self.carica_da_dialog)
         self.file_menu.add_separator()
         self.file_menu.add_command(label="Open Session...", command=self.apri_sessione)
         self.file_menu.add_command(label="Save Session...", command=self.salva_sessione)
@@ -2950,7 +2950,7 @@ class LabSpectrumManager:
 
     def carica_da_dialog(self):
         paths = filedialog.askopenfilenames(initialdir=self.current_dir,
-                                            filetypes=[("Spectra Files", "*.dsp *.sp *.csv *.spc *.SPC"), ("All Files", "*.*")])
+                                            filetypes=[("Spectra Files", "*.dsp *.dsw *.sp *.csv *.spc *.SPC"), ("All Files", "*.*")])
         if paths:
             for p in paths: self.processa_file(p)
             self.current_dir = os.path.dirname(paths[-1])
@@ -3086,6 +3086,8 @@ class LabSpectrumManager:
         try:
             if ext == '.dsp':
                 self.leggi_dsp(path)
+            elif ext == '.dsw':
+                self.leggi_dsw(path)
             elif ext == '.sp':
                 self.leggi_sp(path)
             elif ext == '.csv':
@@ -3119,6 +3121,76 @@ class LabSpectrumManager:
             'df': pd.DataFrame({'x': x_vals, name: y_vals}).set_index('x'),
             'info': {'Sample': name, 'Date': lines[16], 'Type': 'UV-Vis'}
         }
+
+    def leggi_dsw(self, path):
+        """Varian/Agilent Cary WinUV .DSW (MFC-serialized 'TContinuumStore').
+
+        The scan is stored as consecutive (X, Y) float32 pairs, X in scan order (here
+        descending). The text block 'Parameter List' gives Start/Stop/Data Interval, from
+        which the number of points is computed; the data block is located by searching for
+        the Start value as float32 and validating that the following X values step by the
+        interval. Verified on one Cary 500 absorbance scan only (Y values checked against
+        the peak labels stored in the same file); files with several cycles/traces are
+        untested and only the first trace is read."""
+        with open(path, 'rb') as f:
+            raw = f.read()
+        if b'Varian' not in raw[:32] or b'TContinuumStore' not in raw[:128]:
+            raise ValueError("File .DSW non riconosciuto (firma Varian/TContinuumStore mancante)")
+
+        text = raw.decode('latin-1')
+        params = {}
+        # no newlines in the file: each entry is 'key<spaces>value<spaces>' preceded by a
+        # non-printable length byte; an empty value leaves a stray 'f' (the next length byte)
+        pat = r'(?<![ -~])([A-Za-z][A-Za-z0-9 .()/-]*?) {2,}([!-~](?:[ -~]*?[!-~])?)(?= {2,}|[^ -~]|$)'
+        for m in re.finditer(pat, text):
+            if m.group(2) != 'f':
+                params.setdefault(m.group(1).strip(), m.group(2).strip())
+        try:
+            start = float(params['Start (nm)'])
+            stop = float(params['Stop (nm)'])
+            step = float(params['UV-Vis Data Interval (nm)'])
+        except (KeyError, ValueError):
+            raise ValueError("Parametri Start/Stop/Data Interval non trovati nel file .DSW")
+        n = int(round(abs(stop - start) / step)) + 1
+        sign = -1.0 if stop < start else 1.0
+
+        pos = -1
+        key = struct.pack('<f', start)
+        while True:
+            pos = raw.find(key, pos + 1)
+            if pos < 0:
+                raise ValueError("Blocco dati non trovato nel file .DSW")
+            if pos + n * 8 > len(raw):
+                continue
+            pairs = np.frombuffer(raw[pos:pos + n * 8], dtype='<f4').reshape(-1, 2)
+            if np.allclose(pairs[:, 0], start + sign * step * np.arange(n), atol=1e-3):
+                break
+        x = pairs[:, 0].astype(float)
+        y = self._round_sig(pairs[:, 1].astype(float))
+        order = np.argsort(x)
+        x, y = x[order], y[order]
+
+        coll = re.search(r'Collection Time:\s*(\d{2}/\d{2}/\d{2})\s+(\d{2}:\d{2})', text)
+        name = os.path.splitext(os.path.basename(path))[0]
+        info = {
+            'Sample':     name,
+            'File':       os.path.basename(path),
+            'Date':       f"{coll.group(2)} {coll.group(1)}" if coll else 'N/D',
+            'Type':       'UV-Vis',
+            'Instrument': 'Varian ' + params.get('Instrument', 'Cary'),
+            'Y Mode':     params.get('Y Mode', 'N/D'),
+            'Scan Range': f"{x.min():.1f} - {x.max():.1f} nm",
+        }
+        for src, dst in (('UV-Vis Scan Rate (nm/min)', 'Scan Rate (nm/min)'),
+                         ('UV-Vis Data Interval (nm)', 'Data Interval (nm)'),
+                         ('UV-Vis Ave. Time (sec)', 'Average Time (s)'),
+                         ('UV-Vis SBW (nm)', 'SBW (nm)'),
+                         ('Beam Mode', 'Beam Mode'),
+                         ('Baseline Correction', 'Baseline Correction'),
+                         ('Comments', 'Comments')):
+            if params.get(src):
+                info[dst] = params[src]
+        self.spectra[name] = {'df': pd.DataFrame({'x': x, name: y}).set_index('x'), 'info': info}
 
     def leggi_sp(self, path):
         """Parser nativo per file binari .SP di PerkinElmer FTIR.
