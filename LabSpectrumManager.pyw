@@ -136,6 +136,11 @@ class LabSpectrumManager:
         pos_y = (screen_h - win_h) // 2
         self.root.geometry(f"{win_w}x{win_h}+{pos_x}+{pos_y}")
 
+        # A Tk button does not take the keyboard focus when clicked (Windows), so a value typed in an entry and not
+        # confirmed with Enter was never committed: its <FocusOut> did not fire before the button's command ran
+        # (Trim, Fit range, baseline anchors, ... used the old value). Focusing the button on press fixes every panel.
+        self.root.bind_class('Button', '<ButtonPress-1>', lambda e: e.widget.focus_set(), add='+')
+
         if psk is None and not _psk_config().get('declined'):
             self.root.after(400, lambda: self._offer_plotstylekit(PSK_PROBLEM))
 

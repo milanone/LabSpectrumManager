@@ -84,6 +84,9 @@ Loaded spectra are stored in `self.spectra` (dict):
   (`_sc_fit_label`), `_sc_copia_equazione()` fills the clipboard and `_sc_applica()` stores `info['Scatter equation']` next to
   the older low-precision `Scatter VS/P/Slope/Offset` keys. If the model in `_sc_aggiorna_preview()` changes, change the text
   too: `tests/test_scatter_equation.py` evaluates the text against the model
+- `LabSpectrumManager.__init__` binds `<ButtonPress-1>` on the `Button` class to `focus_set()`: a Tk button does not take the focus
+  when clicked, so a number typed in an entry and not confirmed with Enter (Trim limits, fit range, baseline anchors, ...) was
+  not committed before the button's command ran. `tests/test_entry_commit_on_button.py` clicks Apply with real Tk events
 - `apri_derivata()` / `_dv_derivata()` — 1st/2nd derivative via `_savgol(..., deriv=1|2, dx=...)`
   (see below); `dx` is `median(abs(diff(x)))`, always positive regardless of whether the spectrum's
   index happens to run ascending or descending, so the derivative's sign follows increasing X by
