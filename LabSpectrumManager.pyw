@@ -3574,9 +3574,15 @@ class LabSpectrumManager:
             self.spectra[final_label] = {'df': serie, 'info': info}
 
     def leggi_spc(self, path):
-        """Parser per file binari .SPC (Shimadzu RF-5301 fluorescence spectrometer)."""
+        """Parser per file binari .SPC (Shimadzu RF-5301 fluorescence spectrometer).
+
+        Lo stesso suffisso e' usato anche dagli UV-Vis Shimadzu UV-1900 (UVProbe), che
+        scrivono un contenitore OLE2 invece del binario piatto dell'RF-5301: si distingue
+        dalla firma D0CF11E0 e si passa a leggi_spc_uvprobe()."""
         with open(path, 'rb') as f:
             raw = f.read()
+        if raw[:8] == b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1':
+            return self.leggi_spc_uvprobe(path, raw)
 
         name = os.path.splitext(os.path.basename(path))[0]
         header_text = raw[:512].decode('latin-1', errors='ignore')
@@ -3646,6 +3652,145 @@ class LabSpectrumManager:
                                    " / " + ("Open" if "Open" in header_text else "Closed"),
             }
         }
+
+    @staticmethod
+    def _ole_streams(raw):
+        """Minimal OLE2 (compound file) reader: returns {'Storage/Stream': bytes}.
+        Written natively (like the other parsers) to avoid depending on olefile."""
+        sec_size = 1 << struct.unpack_from('<H', raw, 30)[0]
+        mini_size = 1 << struct.unpack_from('<H', raw, 32)[0]
+        n_fat, dir_start, _, cutoff, minifat_start, n_minifat, difat_start, n_difat =             struct.unpack_from('<IIIIIIII', raw, 44)
+        sector = lambda i: raw[(i + 1) * sec_size:(i + 2) * sec_size]
+        difat = list(struct.unpack_from('<109I', raw, 76))
+        sid = difat_start
+        for _ in range(n_difat):
+            vals = struct.unpack_from('<%dI' % (sec_size // 4), sector(sid))
+            difat += vals[:-1]
+            sid = vals[-1]
+        fat = []
+        for sid in difat[:n_fat]:
+            fat += struct.unpack_from('<%dI' % (sec_size // 4), sector(sid))
+
+        def chain(start):
+            out, seen = [], set()
+            while start < 0xFFFFFFFA and start not in seen:
+                seen.add(start)
+                out.append(start)
+                start = fat[start]
+            return out
+
+        def read_big(start, size=None):
+            data = b''.join(sector(i) for i in chain(start))
+            return data if size is None else data[:size]
+
+        directory = read_big(dir_start)
+        entries = []
+        for off in range(0, len(directory), 128):
+            e = directory[off:off + 128]
+            if len(e) < 128:
+                break
+            nlen = struct.unpack_from('<H', e, 64)[0]
+            name = e[:max(nlen - 2, 0)].decode('utf-16le', errors='ignore')
+            left, right, child = struct.unpack_from('<III', e, 68)
+            kind = e[66]
+            start, size = struct.unpack_from('<IQ', e, 116)
+            entries.append((name, kind, left, right, child, start, size))
+
+        ministream = read_big(entries[0][5], entries[0][6])
+        minifat = []
+        for sid in chain(minifat_start) if n_minifat else []:
+            minifat += struct.unpack_from('<%dI' % (sec_size // 4), sector(sid))
+
+        def read_stream(start, size):
+            if size >= cutoff:
+                return read_big(start, size)
+            out, seen = [], set()
+            while start < 0xFFFFFFFA and start not in seen:
+                seen.add(start)
+                out.append(ministream[start * mini_size:(start + 1) * mini_size])
+                start = minifat[start]
+            return b''.join(out)[:size]
+
+        streams = {}
+
+        def walk(idx, prefix):
+            if idx >= len(entries):
+                return
+            name, kind, left, right, child, start, size = entries[idx]
+            walk(left, prefix)
+            walk(right, prefix)
+            if kind == 2:
+                streams[prefix + name] = read_stream(start, size)
+            elif kind == 1:
+                walk(child, prefix + name + '/')
+
+        walk(entries[0][4], '')
+        return streams
+
+    def leggi_spc_uvprobe(self, path, raw):
+        """Shimadzu UV-1900 (UVProbe) .SPC: an OLE2 container. The spectrum is in
+        DataSpectrumStorage/Data/{X,Y} Data.1 as little-endian float64 arrays (X is
+        stored in scan order, i.e. descending); acquisition parameters are length-prefixed
+        'Key:' / 'value' strings in MethodStorage/PageTexts*. Verified on one UV-1900
+        absorbance file only; other UVProbe modes (transmittance, multiple datasets)
+        are untested."""
+        streams = self._ole_streams(raw)
+        xs = [k for k in streams if k.endswith('DataSpectrumStorage/Data/X Data.1')]
+        if not xs:
+            raise ValueError("OLE .SPC without spectral data (X Data.1 stream not found)")
+        base = xs[0][:-len('X Data.1')]
+        x = np.frombuffer(streams[base + 'X Data.1'], dtype='<f8')
+        y = np.frombuffer(streams[base + 'Y Data.1'], dtype='<f8')
+        n = min(len(x), len(y))
+        x, y = x[:n], self._round_sig(y[:n].copy())
+        order = np.argsort(x)
+        x, y = x[order], y[order]
+
+        # Method pages: sequence of length-prefixed ASCII strings; keys end with ':'.
+        params = {}
+        for k, data in streams.items():
+            if '/MethodStorage/PageTexts' not in k:
+                continue
+            strings, i = [], 8
+            while i < len(data):
+                ln = data[i]
+                chunk = data[i + 1:i + 1 + ln]
+                if ln and len(chunk) == ln and all(32 <= c < 127 for c in chunk):
+                    strings.append(chunk.decode('ascii'))
+                    i += 1 + ln
+                else:
+                    i += 1
+            for a, b in zip(strings, strings[1:]):
+                if a.endswith(':') and not b.endswith(':'):
+                    params[a[:-1].replace(' (nm.)', '').strip()] = b
+
+        # Acquisition date: OLE date (days since 1899-12-30) as float64 in DataSetHeaderInfo.
+        date_str = 'N/D'
+        hdr = next((v for k, v in streams.items() if k.endswith('/DataSetHeaderInfo')), b'')
+        if len(hdr) >= 24:
+            try:
+                days = struct.unpack_from('<d', hdr, 16)[0]
+                if 30000 < days < 80000:
+                    dt = datetime.datetime(1899, 12, 30) + datetime.timedelta(days=days)
+                    date_str = dt.strftime('%d/%m/%y')  # time part of the stored value does not match the file name's timestamp, so omitted
+            except Exception:
+                pass
+
+        name = os.path.splitext(os.path.basename(path))[0]
+        mode = params.get('Measuring Mode', 'Absorbance')
+        info = {
+            'Sample':     name,
+            'File':       os.path.basename(path),
+            'Date':       date_str,
+            'Type':       'UV-Vis',
+            'Instrument': params.get('Instrument Type', 'Shimadzu UV-1900'),
+            'Measuring Mode': mode,
+            'Scan Range': f"{x.min():.1f} - {x.max():.1f} nm",
+        }
+        for key in ('Scan Speed', 'Sampling Interval', 'Slit Width'):
+            if key in params:
+                info[key] = params[key]
+        self.spectra[name] = {'df': pd.DataFrame({'x': x, name: y}).set_index('x'), 'info': info}
 
     # --- VISTA ---
     def _popola_tabella_dati(self, table_df):

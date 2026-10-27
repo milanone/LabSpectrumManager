@@ -59,6 +59,7 @@ Loaded spectra are stored in `self.spectra` (dict):
 |-----------|------|--------|
 | `.dsp` | UV-Vis binary | `leggi_dsp()` — parses binary: wavelength range + point count + Y values |
 | `.sp` | FTIR PerkinElmer | `leggi_sp()` — native binary parser (magic `PEPE`, `DSet2DC1DI` blocks), no external tool |
+| `.spc` | Fluorescence (Shimadzu RF-5301) or UV-Vis (Shimadzu UV-1900/UVProbe) | `leggi_spc()` — flat binary for RF-5301; if the file starts with the OLE2 signature `D0CF11E0`, dispatches to `leggi_spc_uvprobe()` (uses the native mini OLE reader `_ole_streams()`; X/Y are float64 streams, X stored descending and re-sorted). UV-1900 verified on one absorbance file only |
 | `.csv` | UV-Vis or FTIR | `leggi_csv()` — auto-detects type by threshold: max value > 2000 → FTIR wavenumbers |
 | `.csv` | UV-Vis (BMG plate reader) | `leggi_csv()` dispatches to `_leggi_csv_bmg()` when `Test run no.` is in the first 4096 chars — one spectrum per well, optional mean-blank subtraction (asks via `askyesno` unless `sottrai_bianco` is passed); format and limits documented in README "BMG plate-reader CSV"; tests in `tests/test_bmg_reader.py` |
 
