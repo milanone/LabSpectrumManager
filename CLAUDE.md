@@ -95,6 +95,7 @@ Loaded spectra are stored in `self.spectra` (dict):
 - `aggiorna_vista()` — refreshes all three panels after any data change; auto-selects the
   listbox entry when exactly one spectrum is loaded, so single-selection tools (Trim,
   Smoothing, Deconvolution, ...) work without an explicit click first
+- `_evidenzia_selezionati()` — on `<<ListboxSelect>>` (and at the end of `aggiorna_vista()`, since `selection_set()` fires no event) thickens the plot lines of the selected spectra (lw 2.6 vs 1.5) without redrawing everything. Only lines tagged `_lsm_main` by `aggiorna_vista()` are touched, so traces drawn by operation panels keep their own widths; legend handles keep the default width until the next redraw
 - `on_mouse_move()` / `on_mouse_leave()` — interactive crosshair cursor tracking on plot
 - `carica_da_dialog()` / `handle_drop()` — file import entry points (dialog and DnD)
 - `esporta_csv()` — exports merged spectra to CSV

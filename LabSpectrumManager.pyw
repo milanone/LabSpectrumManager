@@ -272,6 +272,7 @@ class LabSpectrumManager:
         self.file_listbox = Listbox(self.f_right_inner, selectmode=tk.MULTIPLE, height=8, font=('Arial', 9))
         self.file_listbox.pack(padx=10, pady=5, fill=tk.X)
         self.file_listbox.bind('<Button-3>', self._listbox_tasto_destro)
+        self.file_listbox.bind('<<ListboxSelect>>', lambda e: self._evidenzia_selezionati())
 
         btn_frame = tk.Frame(self.f_right_inner, bg='#f0f4f7')
         btn_frame.pack(fill=tk.X, padx=10)
@@ -3958,7 +3959,8 @@ class LabSpectrumManager:
         visible_cols = [c for c in master_df.columns if c not in self._hidden_spectra]
         for col in visible_cols:
             valid = master_df[col].dropna()
-            self.ax.plot(valid.index, valid.values, label=col, lw=1.5)
+            ln, = self.ax.plot(valid.index, valid.values, label=col, lw=1.5)
+            ln._lsm_main = True   # riconosce le tracce principali (non quelle dei pannelli operazione)
 
         if visible_cols:
             self.ax.set_xlim(min(self.spectra[c]['df'].index.min() for c in visible_cols),
@@ -3983,6 +3985,7 @@ class LabSpectrumManager:
         if visible_cols:
             self.ax.legend(fontsize='8', loc='best')
         self.ax.grid(True, linestyle=':', alpha=0.6)
+        self._evidenzia_selezionati()   # selection_set() non genera <<ListboxSelect>>
         self.canvas.draw()
 
         # Metadata panel — display generico di tutte le chiavi info
@@ -3991,6 +3994,22 @@ class LabSpectrumManager:
             for k, v in data['info'].items():
                 self.param_box.insert(tk.END, f"{k:<20}: {v}\n")
             self.param_box.insert(tk.END, "\n")
+
+    def _evidenzia_selezionati(self):
+        """Ispessisce nel grafico le tracce selezionate in lista (senza ridisegnare tutto)."""
+        try:
+            selected = {self.file_listbox.get(i) for i in self.file_listbox.curselection()}
+            changed = False
+            for ln in self.ax.lines:
+                if getattr(ln, '_lsm_main', False):
+                    lw = 2.6 if ln.get_label() in selected else 1.5
+                    if ln.get_linewidth() != lw:
+                        ln.set_linewidth(lw)
+                        changed = True
+            if changed:
+                self.canvas.draw_idle()
+        except Exception:
+            traceback.print_exc()
 
     # --- OPERAZIONI ARITMETICHE ---
     def media_selezionati(self):
