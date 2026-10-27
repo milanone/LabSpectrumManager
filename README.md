@@ -94,10 +94,13 @@ or Date written in another locale format (shown as found). If a file does not lo
 `numpy`, `pandas`, `matplotlib`, `tkinter` (standard library); `tkinterdnd2` is optional and
 enables drag-and-drop file loading; `scipy` is optional and enables the constrained refinement
 step in the scattering correction auto-fit (a plain least-squares fallback is used without it).
-[PlotStyleKit](https://github.com/milanone/PlotStyleKit) is an optional sibling repo (cloned as
-`../PlotStyleKit` next to this project) providing the shared Origin-like plot style and the
-standalone figure editor behind `File → Save Figure (pickle)` / `File → Edit Figure...`; without
-it those two menu items are unavailable and the app uses default matplotlib styling.
+[PlotStyleKit](https://github.com/milanone/PlotStyleKit) is optional: it provides the shared Origin-like plot
+style and the standalone figure editor behind `File → Save Figure (pickle)` / `File → Edit Figure...`. The program looks
+for it next to itself (`../PlotStyleKit`), in `~/progetti/PlotStyleKit`, in the folder named by the environment variable
+`PLOTSTYLEKIT` and in the folder you chose the last time; if it finds none it says so at start and asks for the folder,
+with *Cancel* for going without it (it will not ask again; *File > PlotStyleKit...* changes that). Without it the app
+uses default matplotlib styling, *Save Figure (pickle)* writes the figure as drawn and *Edit Figure...* offers to locate
+PlotStyleKit.
 
 ## Running
 
