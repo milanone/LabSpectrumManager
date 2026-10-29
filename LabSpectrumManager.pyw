@@ -464,7 +464,7 @@ class LabSpectrumManager:
         ctrl.pack(fill=tk.X, padx=10, pady=6)
 
         # Tre parametri, ciascuno slider fine + casella editabile (valori a piacimento)
-        self._sc_VS  = self._make_linked_row(ctrl, 'VS',        0.0,    0.3,   0.0002,   '{:.4f}')
+        self._sc_VS  = self._make_linked_row(ctrl, 'VS',        0.0,    3.0,   0.002,    '{:.4f}')
         self._sc_M   = self._make_linked_row(ctrl, 'Slope (m)', -0.001, 0.001, 0.000002, '{:.6f}')
         self._sc_M_lock = tk.BooleanVar(value=True)
         m_lock_row = tk.Frame(ctrl, bg=bg)
@@ -594,8 +594,9 @@ class LabSpectrumManager:
         # VS·(λmin/1000)^-2. Scaliamo VS così che tale correzione arrivi a ~2·ampiezza,
         # tenendo conto dell'amplificazione (altrimenti il range risulta troppo ampio).
         lam_min = float(self._sc_x.min())
-        vs_hi = 2.0 * span * (lam_min / 1000.0) ** 2 if lam_min > 0 else span
-        self._linked_set_range(self._sc_VS,  0.0,    vs_hi, vs_hi / 1000.0)
+        # (stima automatica, non piu' usata per lo slider: ora il fondoscala di VS e' fisso a 3)
+        vs_hi = 3.0
+        self._linked_set_range(self._sc_VS,  0.0,    vs_hi, 0.002)
         self._linked_set_range(self._sc_M,  -m_hi,   m_hi,  2 * m_hi / 1000.0)
         self._linked_set_range(self._sc_OFF, -span,  span,  2 * span / 1000.0)
 
