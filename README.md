@@ -16,6 +16,7 @@ averaging, smoothing (boxcar or Savitzky-Golay) and multi-peak deconvolution
 | `.dsw` | UV-Vis (Varian/Agilent Cary WinUV) | native parser; verified on one Cary 500 absorbance scan, only the first trace is read |
 | `.sp` | FTIR PerkinElmer (binary) | native parser (no external tool required) |
 | `.spc` | Fluorescence (Shimadzu RF-5301) or UV-Vis (Shimadzu UV-1900 / UVProbe) | native parsers; the container type is detected from the file signature. UV-1900 verified on one absorbance file |
+| `.vspd` | UV-Vis (Shimadzu UV-1900, LabSolutions UV-Vis) | native parser (same OLE2 container and X/Y streams as the UV-1900 `.spc`). Verified on one absorbance scan (200-600 nm, 1 nm step); the measuring mode is assumed to be absorbance, other modes are untested. If a file does not load, send the first bytes of it |
 | `.csv` | UV-Vis or FTIR | type auto-detected from the X-axis values |
 | `.csv` | UV-Vis (BMG plate reader) | absorbance spectra per well; detected from the header — see [BMG plate-reader CSV](#bmg-plate-reader-csv) |
 

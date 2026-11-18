@@ -245,7 +245,7 @@ class LabSpectrumManager:
         # --- MENU ---
         self.menu_bar = tk.Menu(root)
         self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.file_menu.add_command(label="Open Files (.dsp, .dsw, .sp, .spc, .csv)", command=self.carica_da_dialog)
+        self.file_menu.add_command(label="Open Files (.dsp, .dsw, .sp, .spc, .vspd, .csv)", command=self.carica_da_dialog)
         self.file_menu.add_separator()
         self.file_menu.add_command(label="Open Session...", command=self.apri_sessione)
         self.file_menu.add_command(label="Save Session...", command=self.salva_sessione)
@@ -3052,7 +3052,7 @@ class LabSpectrumManager:
 
     def carica_da_dialog(self):
         paths = filedialog.askopenfilenames(initialdir=self.current_dir,
-                                            filetypes=[("Spectra Files", "*.dsp *.dsw *.sp *.csv *.spc *.SPC"), ("All Files", "*.*")])
+                                            filetypes=[("Spectra Files", "*.dsp *.dsw *.sp *.csv *.spc *.SPC *.vspd"), ("All Files", "*.*")])
         if paths:
             for p in paths: self.processa_file(p)
             self.current_dir = os.path.dirname(paths[-1])
@@ -3196,6 +3196,8 @@ class LabSpectrumManager:
                 self.leggi_csv(path)
             elif ext == '.spc':
                 self.leggi_spc(path)
+            elif ext == '.vspd':
+                self.leggi_vspd(path)
         except Exception as e:
             traceback.print_exc()
             messagebox.showerror("Error", f"Could not read {os.path.basename(path)}: {e}")
@@ -3902,6 +3904,15 @@ class LabSpectrumManager:
         walk(entries[0][4], '')
         return streams
 
+    def leggi_vspd(self, path):
+        """Shimadzu UV-1900 (LabSolutions UV-Vis) .vspd: the same OLE2 container and the
+        same X/Y float64 streams as the UVProbe .SPC, so it shares leggi_spc_uvprobe()."""
+        with open(path, 'rb') as f:
+            raw = f.read()
+        if raw[:8] != b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1':
+            raise ValueError("not an OLE2 .vspd file (signature D0CF11E0 missing)")
+        self.leggi_spc_uvprobe(path, raw)
+
     def leggi_spc_uvprobe(self, path, raw):
         """Shimadzu UV-1900 (UVProbe) .SPC: an OLE2 container. The spectrum is in
         DataSpectrumStorage/Data/{X,Y} Data.1 as little-endian float64 arrays (X is
@@ -3939,17 +3950,26 @@ class LabSpectrumManager:
                 if a.endswith(':') and not b.endswith(':'):
                     params[a[:-1].replace(' (nm.)', '').strip()] = b
 
-        # Acquisition date: OLE date (days since 1899-12-30) as float64 in DataSetHeaderInfo.
+        # Acquisition date: OLE date (days since 1899-12-30) as float64 in DataSetHeaderInfo,
+        # after a length-prefixed string ('RawData' in .vspd, 'Manipulated' in .SPC) and 4
+        # bytes: its offset is 1 + len + 4, not fixed (16 only for 'Manipulated').
         date_str = 'N/D'
         hdr = next((v for k, v in streams.items() if k.endswith('/DataSetHeaderInfo')), b'')
         if len(hdr) >= 24:
             try:
-                days = struct.unpack_from('<d', hdr, 16)[0]
+                days = struct.unpack_from('<d', hdr, 1 + hdr[0] + 4)[0]
                 if 30000 < days < 80000:
                     dt = datetime.datetime(1899, 12, 30) + datetime.timedelta(days=days)
                     date_str = dt.strftime('%d/%m/%y')  # time part of the stored value does not match the file name's timestamp, so omitted
             except Exception:
                 pass
+
+        # .vspd has no PageTexts: the instrument name is a length-prefixed string after a
+        # 4-byte field in MethodStorage/InstrumentNameStream ('UV-1900 Series').
+        if 'Instrument Type' not in params:
+            ins = next((v for k, v in streams.items() if k.endswith('/InstrumentNameStream')), b'')
+            if len(ins) > 5 and 0 < ins[4] <= len(ins) - 5:
+                params['Instrument Type'] = 'Shimadzu ' + ins[5:5 + ins[4]].decode('latin-1')
 
         name = os.path.splitext(os.path.basename(path))[0]
         mode = params.get('Measuring Mode', 'Absorbance')
