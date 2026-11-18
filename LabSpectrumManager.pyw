@@ -359,33 +359,27 @@ class LabSpectrumManager:
         tk.Button(btn_frame2, text="Scaled Subtraction", command=self.apri_sottrazione_scalata,
                   bg='#fff3e0', font=('Arial', 9)).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
 
-        tk.Button(self.f_right_inner, text="Scattering Correction",
-                  command=self.apri_correzione_scattering,
-                  bg='#dce8f5', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(4, 0))
-        tk.Button(self.f_right_inner, text="Normalize Selected",
-                  command=self.apri_normalizzazione,
-                  bg='#f3e5f5', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(4, 0))
-        tk.Button(self.f_right_inner, text="Baseline (FTIR)",
-                  command=self.apri_baseline,
-                  bg='#d7ccc8', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(4, 0))
-        tk.Button(self.f_right_inner, text="Adaptive Baseline",
-                  command=self.apri_baseline_adattiva,
-                  bg='#c8e6c9', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(4, 0))
-        tk.Button(self.f_right_inner, text="Smooth Selected",
-                  command=self.apri_smoothing,
-                  bg='#ffe0b2', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(4, 0))
-        tk.Button(self.f_right_inner, text="Deconvolution",
-                  command=self.apri_deconvoluzione,
-                  bg='#b3e5fc', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(4, 0))
-        tk.Button(self.f_right_inner, text="Trim",
-                  command=self.apri_trim,
-                  bg='#cfd8dc', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(4, 0))
-        tk.Button(self.f_right_inner, text="Derivative",
-                  command=self.apri_derivata,
-                  bg='#d1c4e9', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(4, 0))
-        tk.Button(self.f_right_inner, text="Shift / Scale",
-                  command=self.apri_shift_scale,
-                  bg='#f8bbd0', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(4, 0))
+        # Operation buttons on two columns, like the rows above. A grid with uniform columns
+        # (not one pack row per pair) keeps every button the same width, including the last
+        # one when the count is odd, which stays on the left half instead of stretching.
+        btn_frame_ops = tk.Frame(self.f_right_inner, bg='#f0f4f7')
+        btn_frame_ops.pack(fill=tk.X, padx=10, pady=(2, 0))
+        btn_frame_ops.columnconfigure((0, 1), weight=1, uniform='ops')
+        operazioni = [
+            ("Scattering Correction", self.apri_correzione_scattering, '#dce8f5'),
+            ("Normalize Selected",    self.apri_normalizzazione,       '#f3e5f5'),
+            ("Baseline (FTIR)",       self.apri_baseline,              '#d7ccc8'),
+            ("Adaptive Baseline",     self.apri_baseline_adattiva,     '#c8e6c9'),
+            ("Smooth Selected",       self.apri_smoothing,             '#ffe0b2'),
+            ("Deconvolution",         self.apri_deconvoluzione,        '#b3e5fc'),
+            ("Trim",                  self.apri_trim,                  '#cfd8dc'),
+            ("Derivative",            self.apri_derivata,              '#d1c4e9'),
+            ("Shift / Scale",         self.apri_shift_scale,           '#f8bbd0'),
+        ]
+        for i, (testo, comando, colore) in enumerate(operazioni):
+            tk.Button(btn_frame_ops, text=testo, command=comando, bg=colore,
+                      font=('Arial', 9)).grid(row=i // 2, column=i % 2, sticky='ew',
+                                              padx=2, pady=(2, 0))
 
         # --- PANNELLO METADATA (visibile per default) ---
         self.f_metadata = tk.Frame(self.f_right_inner, bg='#f0f4f7')
