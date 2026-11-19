@@ -99,6 +99,30 @@ class TestVesicleTheory(unittest.TestCase):
         self.assertAlmostEqual(got / ref, 1.0, delta=0.01)
 
 
+@unittest.skipUnless(HAS_SCIPY, "scipy not installed")
+class TestAmplitude(unittest.TestCase):
+    lam = np.array([500.0])
+
+    def test_unilamellar_reference_value(self):
+        """Value computed while developing the model (100 nm, 10 mg/mL POPC, 0.1 cm cuvette)."""
+        a = lsm.vesicle_amplitude(self.lam, 100.0, 0.2, 1, 10.0, 0.1)[0]
+        self.assertAlmostEqual(a, 0.0606, delta=0.002)
+
+    def test_proportional_to_concentration_and_path(self):
+        a = lsm.vesicle_amplitude(self.lam, 150.0, 0.2, 1, 10.0, 1.0)[0]
+        self.assertAlmostEqual(lsm.vesicle_amplitude(self.lam, 150.0, 0.2, 1, 2.0, 1.0)[0] / a, 0.2, places=3)
+        self.assertAlmostEqual(lsm.vesicle_amplitude(self.lam, 150.0, 0.2, 1, 10.0, 0.1)[0] / a, 0.1, places=3)
+
+    def test_amplitude_grows_about_linearly_with_the_lamellae(self):
+        a1 = lsm.vesicle_amplitude(self.lam, 400.0, 0.3, 1, 0.25, 1.0)[0]
+        a7 = lsm.vesicle_amplitude(self.lam, 400.0, 0.3, 7, 0.25, 1.0)[0]
+        self.assertTrue(6.0 < a7 / a1 < 9.0)
+
+    def test_amplitude_grows_with_size_at_fixed_lipid(self):
+        a = [lsm.vesicle_amplitude(self.lam, d, 0.2, 1, 10.0, 0.1)[0] for d in (60.0, 100.0, 200.0)]
+        self.assertTrue(a[0] < a[1] < a[2])
+
+
 class TestPanelOffsetLock(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -153,6 +177,17 @@ class TestPanelOffsetLock(unittest.TestCase):
         labels = [w for w in win.winfo_children() if isinstance(w, tk.Label) and "σ" in str(w.cget("text"))]
         self.assertTrue(labels)
         self.assertIn("meets the curve", labels[0].cget("text"))
+
+
+    @unittest.skipUnless(HAS_SCIPY, "scipy not installed")
+    def test_amplitude_window_opens_and_reports_lamellae(self):
+        before = set(self.root.winfo_children())
+        self.app._sc_ampiezza_lamelle()
+        win = [w for w in self.root.winfo_children() if w not in before and isinstance(w, tk.Toplevel)][0]
+        self.addCleanup(win.destroy)
+        text = [w.cget("text") for w in win.winfo_children() if isinstance(w, tk.Label)][0]
+        self.assertIn("Measured A(500 nm)", text)
+        self.assertIn("lamellae", text)
 
 
 if __name__ == "__main__":

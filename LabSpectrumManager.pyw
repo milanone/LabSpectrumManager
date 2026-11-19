@@ -231,6 +231,30 @@ def vesicle_P_curve(diameters, lam, sigma=0.2, t=4.5, dn=0.12, acc_deg=10.0):
                      for d in diameters])
 
 
+def vesicle_amplitude(lam, d, sigma, n=1, c_mg_ml=10.0, path_cm=1.0, t_bil=4.5, dn=0.12, rep=7.0, acc_deg=10.0,
+                      mw=760.08, area=0.65, nbin=11):
+    """Absorbance (as the spectrophotometer reads it) of a suspension of n-lamellar vesicles at the wavelengths lam,
+    from the lipid concentration alone: vesicles per nm^3 = lipid molecules per nm^3 / lipids per vesicle, times the
+    cross-section of one vesicle, times the path. Defaults: POPC (760.08 g/mol, 0.65 nm^2 per lipid), bilayer
+    4.5 nm, index excess 0.12. A multilamellar vesicle is one shell of thickness n*rep-(rep-t_bil) (rep = bilayer +
+    water repeat distance) whose index excess is averaged over the water gaps: dn*n*t_bil/thickness; its lipids are
+    the sum over the n concentric bilayers. c_mg_ml is the lipid concentration IN THE CUVETTE (mg/mL = g/L)."""
+    T = n * rep - (rep - t_bil)
+    dne = dn * n * t_bil / T
+    if sigma > 0:
+        z = np.linspace(-2.5, 2.5, nbin)
+        w = np.exp(-z ** 2 / 2)
+        w /= w.sum()
+        diam = d * np.exp(sigma * z)
+    else:
+        w, diam = np.array([1.0]), np.array([float(d)])
+    lipids = sum(wi * sum(4 * np.pi * ((di / 2 - k * rep) ** 2 + (di / 2 - k * rep - t_bil) ** 2) / area
+                          for k in range(n) if di / 2 - k * rep - t_bil > 0) for wi, di in zip(w, diam))
+    rho = c_mg_ml / mw * 6.022e23 / 1e24                      # lipid molecules per nm^3
+    C = vesicle_population(lam, d, sigma, T, dne, acc_deg, nbin)
+    return path_cm * 1e7 / np.log(10) * rho / lipids * C
+
+
 class LabSpectrumManager:
     def __init__(self, root):
         self.root = root
@@ -623,6 +647,8 @@ class LabSpectrumManager:
                   command=self._sc_auto, bg='#fff9c4', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(2, 0))
         tk.Button(self.f_scattering, text="P vs size (theory)...",
                   command=self._sc_curva_teorica, bg='#e1f5fe', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(2, 0))
+        tk.Button(self.f_scattering, text="Amplitude & lamellae...",
+                  command=self._sc_ampiezza_lamelle, bg='#e1f5fe', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(2, 0))
 
         # Pulsanti Apply / Cancel
         btn_sc = tk.Frame(self.f_scattering, bg=bg)
@@ -998,6 +1024,115 @@ class LabSpectrumManager:
             win.config(cursor='')
 
         tk.Button(ctrl, text="Compute", command=calcola, bg='#fff9c4', font=('Arial', 9)).pack(side=tk.LEFT, padx=8)
+        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        info.pack(fill=tk.X, padx=8, pady=(0, 6))
+        calcola()
+
+    # --- SCATTERING: absolute amplitude from the lipid concentration, and number of lamellae ---
+    def _sc_ampiezza_lamelle(self):
+        """Window comparing the measured absorbance at a reference wavelength with the one predicted from the lipid
+        concentration for n-lamellar vesicles (Mie theory, vesicle_amplitude): A(d) curves for n = 1, 2, 4, 7 with the
+        measured value as a line. For unilamellar vesicles (extrusion, 11 passes) the intersection with n = 1 gives the
+        size; for a known size, measured/predicted gives the equivalent number of lamellae (the amplitude is almost
+        proportional to n). The absolute scale depends on shell thickness x index (a factor 2-3) and on the lipid
+        concentration actually in the cuvette, so it is a consistency check more than a measurement."""
+        if self._sc_x is None:
+            return
+        try:
+            import scipy.special  # noqa: F401  (needed by the Mie calculation)
+        except ImportError:
+            messagebox.showwarning("Amplitude & lamellae", "Il calcolo di Mie richiede scipy (pip install scipy).")
+            return
+        x, y = self._sc_x, self._sc_y
+        win = tk.Toplevel(self.root)
+        win.title("Amplitude & lamellae")
+        bg = '#f0f4f7'
+        win.configure(bg=bg)
+        fields = (("Lipid stock (mg/mL)", 'c', '10'), ("Dilution (1:x)", 'dil', '1'), ("Lipid loss (%)", 'loss', '0'),
+                  ("Path (cm)", 'path', '1'), ("Wavelength (nm)", 'lam', '500'), ("Known size d (nm)", 'd', '126'),
+                  ("Width σ", 'sg', '0.2'), ("Half-angle (°)", 'acc', '10'), ("Bilayer (nm)", 't', '4.5'),
+                  ("Index excess", 'dn', '0.12'), ("Repeat (nm)", 'rep', '7'), ("Lipid MW", 'mw', '760.08'),
+                  ("Area/lipid (nm²)", 'area', '0.65'))
+        ctrl = tk.Frame(win, bg=bg)
+        ctrl.pack(fill=tk.X, padx=8, pady=6)
+        v = {}
+        for i, (lab, key, val) in enumerate(fields):
+            r, c = divmod(i, 4)
+            tk.Label(ctrl, text=lab, bg=bg, font=('Arial', 8)).grid(row=r, column=2 * c, sticky='e', padx=(6, 2), pady=1)
+            v[key] = tk.StringVar(value=val)
+            tk.Entry(ctrl, textvariable=v[key], width=8).grid(row=r, column=2 * c + 1, sticky='w', pady=1)
+        info = tk.Label(win, text="", bg=bg, font=('Consolas', 8), justify=tk.LEFT, wraplength=700)
+        from matplotlib.figure import Figure
+        fig = Figure(figsize=(7.0, 4.2), dpi=100)
+        ax = fig.add_subplot(111)
+        cv = FigureCanvasTkAgg(fig, master=win)
+
+        def calcola():
+            try:
+                p = {k: float(s.get().replace(',', '.')) for k, s in v.items()}
+            except ValueError:
+                messagebox.showwarning("Amplitude & lamellae", "Valori non numerici.", parent=win)
+                return
+            if min(p['c'], p['dil'], p['path'], p['d'], p['t'], p['rep'], p['mw'], p['area']) <= 0 or p['sg'] < 0:
+                messagebox.showwarning("Amplitude & lamellae", "Valori non validi.", parent=win)
+                return
+            if not (x.min() <= p['lam'] <= x.max()):
+                messagebox.showwarning("Amplitude & lamellae", "La lunghezza d'onda è fuori dallo spettro.", parent=win)
+                return
+            win.config(cursor='watch')
+            win.update_idletasks()
+            conc = p['c'] / p['dil'] * (1 - p['loss'] / 100.0)          # lipid in the cuvette (mg/mL)
+            lam = np.array([p['lam']])
+            A_meas = float(np.interp(p['lam'], x, y))
+
+            def amp(d, n):
+                return float(vesicle_amplitude(lam, d, p['sg'], int(n), conc, p['path'], p['t'], p['dn'], p['rep'],
+                                               p['acc'], p['mw'], p['area'])[0])
+
+            ds = np.array([40, 50, 60, 80, 100, 126, 150, 200, 250, 300, 400], float)
+            ax.clear()
+            curves = {}
+            for n in (1, 2, 4, 7):
+                curves[n] = np.array([amp(d, n) for d in ds])
+                ax.plot(ds, curves[n], 'o-', ms=3, label=f'{n} lamella' + ('e' if n > 1 else ''))
+            ax.axhline(A_meas, color='red', ls='--', lw=1, label=f'measured A({p["lam"]:.0f}) = {A_meas:.4f}')
+            ax.axvline(p['d'], color='grey', ls=':', lw=1)
+            ax.set_xlabel("Vesicle diameter (nm)")
+            ax.set_ylabel(f"A at {p['lam']:.0f} nm, {p['path']:g} cm, {conc:.3g} mg/mL lipid")
+            ax.set_yscale('log')
+            ax.grid(True, ls=':', alpha=0.6, which='both')
+            ax.legend(fontsize=8)
+            fig.tight_layout()
+            cv.draw()
+            lines = [f"Lipid in the cuvette: {conc:.3g} mg/mL (stock {p['c']:g} mg/mL, 1:{p['dil']:g}, "
+                     f"loss {p['loss']:g}%). Measured A({p['lam']:.0f} nm) = {A_meas:.4f} (spectrum as loaded)."]
+            c1 = curves[1]
+            cross = [ds[i] + (ds[i + 1] - ds[i]) * (A_meas - c1[i]) / (c1[i + 1] - c1[i])
+                     for i in range(len(ds) - 1) if (c1[i] - A_meas) * (c1[i + 1] - A_meas) <= 0 and c1[i] != c1[i + 1]]
+            lines.append(("1 lamella matches the measured A at d = " + ", ".join(f"{c:.0f}" for c in cross) + " nm.")
+                         if cross else ("1 lamella stays below the measured A up to 400 nm." if A_meas > c1.max()
+                                        else "1 lamella is already above the measured A at 40 nm."))
+            a1 = amp(p['d'], 1)
+            ns = np.arange(1, 13)
+            an = np.array([amp(p['d'], n) for n in ns])
+            if A_meas <= an[0]:
+                eq = A_meas / a1
+                lines.append(f"At d = {p['d']:g} nm: predicted for 1 lamella {a1:.4f}; measured/predicted = {eq:.2f} "
+                             f"(equivalent lamellae ≈ {eq:.1f}, i.e. unilamellar or fewer lipids than assumed).")
+            elif A_meas > an[-1]:
+                lines.append(f"At d = {p['d']:g} nm: predicted for 1 lamella {a1:.4f}; the measurement exceeds even "
+                             f"12 lamellae ({an[-1]:.4f}).")
+            else:
+                eq = float(np.interp(A_meas, an, ns))
+                lines.append(f"At d = {p['d']:g} nm: predicted for 1 lamella {a1:.4f}; measured/predicted = "
+                             f"{A_meas / a1:.2f}, equivalent lamellae ≈ {eq:.1f}.")
+            lines.append("The absolute scale is uncertain by a factor of about 2-3 (bilayer thickness x index) and "
+                         "follows the lipid really in the cuvette: read it as a consistency check.")
+            info.config(text="\n".join(lines))
+            win.config(cursor='')
+
+        tk.Button(ctrl, text="Compute", command=calcola, bg='#fff9c4', font=('Arial', 9)).grid(
+            row=0, column=8, rowspan=2, padx=10)
         cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         info.pack(fill=tk.X, padx=8, pady=(0, 6))
         calcola()

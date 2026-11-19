@@ -164,6 +164,13 @@ export — see Dependencies.
   Needs `scipy`. Checked on three POPC–cholesterol–PEG samples against DLS (agreement at 177 nm; a 126 nm DLS
   sample gave ~80 nm from the spectrum); the model is unilamellar and its shell parameters are fixed
   assumptions, editable in the window.
+  *Amplitude & lamellae...* predicts the absorbance at a reference wavelength from the lipid concentration alone
+  (stock, dilution, loss, cuvette path; POPC molar mass and area per lipid editable) for n-lamellar vesicles, and plots
+  it against diameter for 1, 2, 4 and 7 lamellae with the measured value as a line: for extruded (unilamellar)
+  vesicles the intersection with the 1-lamella curve gives the size, and for a known size measured/predicted gives
+  the equivalent number of lamellae. The absolute scale depends on bilayer thickness x index (a factor 2-3), so it is a
+  consistency check. On the three samples above it gave 0.9 (100 nm, 10 mg/mL, 0.1 cm), 1.8 (200 nm) and ~7 lamellae
+  for the 3-pass 450 nm sample.
 - **Linear baseline** (FTIR) — a two-anchor baseline, draggable on the graph, for FTIR spectra.
 - **Adaptive baseline** — a lower envelope via iterated moving averages with a minimum
   constraint, adjustable window via a slider (from "flat" to "hugging the signal").
