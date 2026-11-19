@@ -155,7 +155,15 @@ export — see Dependencies.
   parameters in place of the symbols, the residual of the last auto-fit, and a *Copy equation*
   button (form and parameters, ready for a report); the corrected spectrum keeps the parameters and
   the equation (`Scatter equation`, full precision) in its metadata. Theory and operating procedure in
-  [`scattering_correction_theory.md`](scattering_correction_theory.md).
+  [`scattering_correction_theory.md`](scattering_correction_theory.md). *fix offset = 0* makes **Auto** fit the
+  pure power law by plain least squares (the right model for non-absorbing particles such as liposomes), and
+  *P vs size (theory)...* shows the exponent P that Mie theory predicts for unilamellar vesicles of each
+  diameter (thin lipid shell, log-normal population, instrument collection half-angle, default 10°) over the
+  current fit window, with the P in the panel as a line: the diameters where they meet are the sizes compatible
+  with the spectrum. The curve is steep up to about 130 nm and flat above it, so there P does not give the size.
+  Needs `scipy`. Checked on three POPC–cholesterol–PEG samples against DLS (agreement at 177 nm; a 126 nm DLS
+  sample gave ~80 nm from the spectrum); the model is unilamellar and its shell parameters are fixed
+  assumptions, editable in the window.
 - **Linear baseline** (FTIR) — a two-anchor baseline, draggable on the graph, for FTIR spectra.
 - **Adaptive baseline** — a lower envelope via iterated moving averages with a minimum
   constraint, adjustable window via a slider (from "flat" to "hugging the signal").
@@ -183,6 +191,8 @@ export — see Dependencies.
 - `old version and side projects/` — earlier versions (v0-v2) and side projects
   (`scattering.pyw`, `spc_plotter.pyw`) kept as historical reference
 - `test_sp_reader.py` — test for the native `.sp` parser (FTIR PerkinElmer)
+- `tests/test_scatter_mie.py` — offset-free power-law fit and the vesicle Mie theory (Rayleigh limit, textbook
+  solid-sphere check, panel and theory window)
 - `tests/test_bmg_reader.py` — unit tests for the BMG plate-reader CSV reader (synthetic files;
   run with `python -m unittest discover -s tests -v`)
 

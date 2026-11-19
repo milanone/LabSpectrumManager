@@ -120,6 +120,117 @@ def scatter_equation(VS, P, M, OFF):
             + term(-M, "·λ") + term(OFF, "") + "   (λ in nm)")
 
 
+def fit_power_law(x, y, P=None, m=0.0, p_lo=1.0, p_hi=5.0):
+    """Least-squares fit of y = VS*(x/1000)^-P - m*x with NO offset (plain, unconstrained).
+    P=None optimises the exponent in [p_lo, p_hi] (grid scan, VS and the slope are linear so they are solved
+    exactly at each P); m=None fits the slope too, a number keeps it fixed. Returns (VS, P, m, rms)."""
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+
+    def solve(p):
+        t = (x / 1000.0) ** -p
+        if m is None:
+            c, *_ = np.linalg.lstsq(np.column_stack([t, -x]), y, rcond=None)
+            vs, mm = float(c[0]), float(c[1])
+        else:
+            vs, mm = float((t @ (y + m * x)) / (t @ t)), float(m)
+        return vs, mm, float(np.sqrt(np.mean((y - (vs * t - mm * x)) ** 2)))
+
+    if P is not None:
+        vs, mm, r = solve(float(P))
+        return vs, float(P), mm, r
+    grid = np.linspace(p_lo, p_hi, 161)
+    best = min(grid, key=lambda p: solve(p)[2])
+    fine = np.linspace(max(p_lo, best - 0.025), min(p_hi, best + 0.025), 101)
+    best = min(fine, key=lambda p: solve(p)[2])
+    vs, mm, r = solve(best)
+    return vs, float(best), mm, r
+
+
+# ---- Mie theory for a vesicle (thin lipid shell in water): the theoretical P(d) curve of the scattering panel ----
+# Bohren & Huffman ch. 8 coefficients for a coated sphere; the core has the index of the medium. scipy.special is
+# imported only here, so the rest of the program does not need it.
+def _water_index(lam):
+    return 1.3245 + 3.0e3 / np.asarray(lam, float) ** 2     # Cauchy fit: 1.333 at 589 nm, 1.343 at 400 nm
+
+
+def _mie_coefs(lam, d, t, dn):
+    from scipy.special import spherical_jn, spherical_yn
+
+    def ric(n, z):
+        j, yy = spherical_jn(n, z), spherical_yn(n, z)
+        jp, yp = spherical_jn(n, z, derivative=True), spherical_yn(n, z, derivative=True)
+        return z * j, j + z * jp, -z * yy, -(yy + z * yp)
+
+    lam = np.asarray(lam, float)
+    nm = _water_index(lam)
+    k = 2 * np.pi * nm / lam
+    b = d / 2.0
+    a = max(b - t, 1e-6)
+    m2 = (nm + dn) / nm
+    x, y = k * a, k * b
+    nmax = int(np.ceil(y.max() + 4 * y.max() ** (1 / 3) + 2))
+    an, bn = [], []
+    for n in range(1, nmax + 1):
+        p1x, d1x, _, _ = ric(n, x)
+        p2x, d2x, c2x, dc2x = ric(n, m2 * x)
+        py, dpy, cy, dcy = ric(n, y)
+        p2y, d2y, c2y, dc2y = ric(n, m2 * y)
+        xi, dxi = py - 1j * cy, dpy - 1j * dcy
+        An = (m2 * p2x * d1x - d2x * p1x) / (m2 * c2x * d1x - dc2x * p1x)
+        Bn = (m2 * p1x * d2x - p2x * d1x) / (m2 * dc2x * p1x - d1x * c2x)
+        an.append((py * (d2y - An * dc2y) - m2 * dpy * (p2y - An * c2y)) /
+                  (xi * (d2y - An * dc2y) - m2 * dxi * (p2y - An * c2y)))
+        bn.append((m2 * py * (d2y - Bn * dc2y) - dpy * (p2y - Bn * c2y)) /
+                  (m2 * xi * (d2y - Bn * dc2y) - dxi * (p2y - Bn * c2y)))
+    return np.array(an), np.array(bn), k
+
+
+def vesicle_turbidity(lam, d, t=4.5, dn=0.12, acc_deg=10.0):
+    """Cross-section (nm^2) of one vesicle (outer diameter d nm, shell t nm, index excess dn) as a spectrophotometer
+    sees it: total scattering minus the light scattered inside the collection half-angle acc_deg, which still reaches
+    the detector (0 = true extinction)."""
+    an, bn, k = _mie_coefs(lam, d, t, dn)
+    N = an.shape[0]
+    n = np.arange(1, N + 1)[:, None]
+    csca = 2 * np.pi / k ** 2 * np.sum((2 * n + 1) * (abs(an) ** 2 + abs(bn) ** 2), axis=0)
+    if acc_deg <= 0:
+        return csca
+    th = np.linspace(0, np.radians(acc_deg), 200)
+    mu = np.cos(th)
+    pi_prev, pi_cur = np.zeros_like(mu), np.ones_like(mu)
+    S1 = np.zeros((len(th), len(k)), complex)
+    S2 = np.zeros_like(S1)
+    for i in range(1, N + 1):
+        if i > 1:
+            pi_prev, pi_cur = pi_cur, ((2 * i - 1) / (i - 1)) * mu * pi_cur - (i / (i - 1)) * pi_prev
+        tau = i * mu * pi_cur - (i + 1) * pi_prev
+        w = (2 * i + 1) / (i * (i + 1))
+        S1 += w * (np.outer(pi_cur, an[i - 1]) + np.outer(tau, bn[i - 1]))
+        S2 += w * (np.outer(tau, an[i - 1]) + np.outer(pi_cur, bn[i - 1]))
+    dC = (abs(S1) ** 2 + abs(S2) ** 2) / (2 * k ** 2)
+    trapz = getattr(np, 'trapezoid', None) or np.trapz        # renamed in numpy 2
+    return csca - 2 * np.pi * trapz(dC * np.sin(th)[:, None], th, axis=0)
+
+
+def vesicle_population(lam, d_med, sigma, t=4.5, dn=0.12, acc_deg=10.0, nbin=11):
+    """Number-weighted mean cross-section of a log-normal population (median d_med nm, shape sigma)."""
+    if sigma <= 0:
+        return vesicle_turbidity(lam, d_med, t, dn, acc_deg)
+    z = np.linspace(-2.5, 2.5, nbin)
+    w = np.exp(-z ** 2 / 2)
+    w /= w.sum()
+    return sum(wi * vesicle_turbidity(lam, d_med * np.exp(sigma * zi), min(t, d_med * np.exp(sigma * zi) / 2 - 1),
+                                      dn, acc_deg) for zi, wi in zip(z, w))
+
+
+def vesicle_P_curve(diameters, lam, sigma=0.2, t=4.5, dn=0.12, acc_deg=10.0):
+    """Exponent P of the pure power law VS*(lam/1000)^-P (no offset, no slope) fitted on the theoretical spectrum of
+    vesicles of each median diameter, over the wavelengths lam: the same fit that the panel makes on a measurement."""
+    return np.array([fit_power_law(lam, vesicle_population(lam, d, sigma, t, dn, acc_deg), m=0.0)[1]
+                     for d in diameters])
+
+
 class LabSpectrumManager:
     def __init__(self, root):
         self.root = root
@@ -467,6 +578,17 @@ class LabSpectrumManager:
         tk.Checkbutton(m_lock_row, text='fix slope', variable=self._sc_M_lock, bg=bg,
                        font=('Consolas', 8)).pack(side=tk.LEFT, padx=(10, 0))
         self._sc_OFF = self._make_linked_row(ctrl, 'Offset',    -1.5,   1.5,   0.001,    '{:.3f}')
+        # Offset fixed at 0: Auto then fits the pure power law VS*(λ/1000)^-P (with the slope fixed or free) by plain
+        # least squares. For non-absorbing particles (liposomes) the exponent is then the true slope of the turbidity
+        # and can be compared with the theoretical P(d) curve; a free offset absorbs part of the curvature.
+        self._sc_OFF_lock = tk.BooleanVar(value=False)
+        off_lock_row = tk.Frame(ctrl, bg=bg)
+        off_lock_row.pack(fill=tk.X, pady=(0, 3))
+        tk.Label(off_lock_row, text='', width=9, bg=bg).pack(side=tk.LEFT)   # alignment
+        tk.Checkbutton(off_lock_row, text='fix offset = 0', variable=self._sc_OFF_lock, bg=bg,
+                       font=('Consolas', 8),
+                       command=lambda: self._sc_OFF_lock.get() and self._linked_set(self._sc_OFF, 0.0)
+                       ).pack(side=tk.LEFT, padx=(10, 0))
 
         # Esponente P: slider continuo + casella, con preset 1/2/3/4 e blocco "fix P"
         self._sc_P = self._make_linked_row(ctrl, 'P', 1.0, 5.0, 0.01, '{:.2f}')
@@ -499,6 +621,8 @@ class LabSpectrumManager:
         self._sc_range_label.pack(pady=(6, 0))
         tk.Button(self.f_scattering, text="Auto (fit window)",
                   command=self._sc_auto, bg='#fff9c4', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(2, 0))
+        tk.Button(self.f_scattering, text="P vs size (theory)...",
+                  command=self._sc_curva_teorica, bg='#e1f5fe', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(2, 0))
 
         # Pulsanti Apply / Cancel
         btn_sc = tk.Frame(self.f_scattering, bg=bg)
@@ -690,6 +814,23 @@ class LabSpectrumManager:
             return
         x_ref, y_ref = x[mask], y[mask]
 
+        if self._sc_OFF_lock.get():
+            # Offset fixed at 0: plain least squares of the pure power law. The "trace <= spectrum" constraint of the
+            # general fit is dropped here: with no offset to lower, it would push the trace below the data and bias P.
+            VS_f, P_f, M_f, rmse = fit_power_law(x_ref, y_ref, P=P0 if lock_P else None,
+                                                 m=M0_fixed if lock_M else None)
+            self._linked_set(self._sc_VS, round(max(VS_f, 0.0), 6))
+            self._linked_set(self._sc_OFF, 0.0)
+            if not lock_M:
+                self._linked_set(self._sc_M, round(M_f, 8))
+            if not lock_P:
+                self._linked_set(self._sc_P, round(P_f, 3))
+            self._sc_fit_label.config(
+                text=f"Auto fit {x_lo:.1f}–{x_hi:.1f} nm, {len(x_ref)} points, rms residual {rmse:.3g}; "
+                     f"offset fixed at 0 (plain least squares), P {'fixed' if lock_P else 'optimised'}, "
+                     f"slope {'fixed' if lock_M else 'optimised'}")
+            return
+
         # Fit lineare iniziale a P fisso: VS*(x/1000)^-P - M*x + OFF = y (sulla finestra)
         A_ref = np.column_stack([
             (x_ref / 1000.0) ** -P0,
@@ -779,6 +920,87 @@ class LabSpectrumManager:
         self._sc_fit_label.config(
             text=f"Auto fit {x_lo:.1f}–{x_hi:.1f} nm, {len(x_ref)} points, rms residual {rmse:.3g}; "
                  f"P {'fixed' if lock_P else 'optimised'}, slope {'fixed' if lock_M else 'optimised'}")
+
+    # --- SCATTERING: theoretical P(d) curve of liposomes (Mie theory), compared with the current P ---
+    def _sc_curva_teorica(self):
+        """Window with the exponent P that a pure power law (no offset, no slope) gives on the theoretical spectrum of
+        unilamellar vesicles of each diameter, over the current fit window, with the P in the panel as a line: the
+        diameters where the curve meets the line are the sizes compatible with the measurement. Where the curve is
+        flat (about 130-250 nm) P does not determine the size."""
+        if self._sc_x is None or self._sc_vline_lo is None:
+            return
+        try:
+            import scipy.special  # noqa: F401  (needed by the Mie calculation)
+        except ImportError:
+            messagebox.showwarning("P vs size", "Il calcolo di Mie richiede scipy (pip install scipy).")
+            return
+        x_lo = self._sc_vline_lo.get_xdata()[0]
+        x_hi = self._sc_vline_hi.get_xdata()[0]
+        x_lo, x_hi = min(x_lo, x_hi), max(x_lo, x_hi)
+        lam = self._sc_x[(self._sc_x >= x_lo) & (self._sc_x <= x_hi)]
+        if len(lam) < 5 or lam.min() < 200 or lam.max() > 1500:
+            messagebox.showwarning("P vs size", "La finestra di fit deve contenere almeno 5 punti tra 200 e 1500 nm.")
+            return
+        lam = lam[::max(1, len(lam) // 46)]          # at most ~46 wavelengths: the curve is smooth and Mie is slow
+        P_now = float(self._sc_P['value'].get())
+
+        win = tk.Toplevel(self.root)
+        win.title("P vs size (theory)")
+        bg = '#f0f4f7'
+        win.configure(bg=bg)
+        ctrl = tk.Frame(win, bg=bg)
+        ctrl.pack(fill=tk.X, padx=8, pady=6)
+        v = {}
+        for lab, key, val in (("Collection half-angle (°)", 'acc', '10'), ("Shell thickness (nm)", 't', '4.5'),
+                              ("Shell index excess", 'dn', '0.12'), ("Width σ (log-normal)", 'sg', '0.2, 0.3')):
+            tk.Label(ctrl, text=lab, bg=bg, font=('Arial', 8)).pack(side=tk.LEFT, padx=(6, 2))
+            v[key] = tk.StringVar(value=val)
+            tk.Entry(ctrl, textvariable=v[key], width=8 if key != 'sg' else 10).pack(side=tk.LEFT)
+        info = tk.Label(win, text="", bg=bg, font=('Consolas', 8), justify=tk.LEFT, wraplength=620)
+        from matplotlib.figure import Figure
+        fig = Figure(figsize=(6.4, 4.2), dpi=100)
+        ax = fig.add_subplot(111)
+        cv = FigureCanvasTkAgg(fig, master=win)
+
+        def calcola():
+            try:
+                acc, t, dn = float(v['acc'].get()), float(v['t'].get()), float(v['dn'].get())
+                sgs = [float(s) for s in v['sg'].get().replace(';', ',').split(',') if s.strip()]
+            except ValueError:
+                messagebox.showwarning("P vs size", "Valori non numerici.", parent=win)
+                return
+            if not sgs or t <= 0 or acc < 0:
+                return
+            win.config(cursor='watch')
+            win.update_idletasks()
+            d = np.array([40, 50, 60, 70, 80, 90, 100, 115, 130, 150, 175, 200, 225, 250, 300, 350, 400], float)
+            ax.clear()
+            lines = []
+            for sg in sgs:
+                Pc = vesicle_P_curve(d, lam, sg, t, dn, acc)
+                ax.plot(d, Pc, 'o-', ms=3, label=f'σ = {sg:g}')
+                cross = []
+                for i in range(len(d) - 1):
+                    a, b = Pc[i] - P_now, Pc[i + 1] - P_now
+                    if a == 0 or a * b < 0:
+                        cross.append(d[i] + (d[i + 1] - d[i]) * (0 if a == 0 else a / (a - b)))
+                lines.append(f"σ {sg:g}: " + ("P = %.2f meets the curve at d = %s nm" % (
+                    P_now, ", ".join(f"{c:.0f}" for c in cross)) if cross else "P outside the curve"))
+            ax.axhline(P_now, color='red', ls='--', lw=1, label=f'P in the panel = {P_now:.2f}')
+            ax.set_xlabel("Vesicle diameter (nm)")
+            ax.set_ylabel("P (pure power law, offset = 0)")
+            ax.set_title(f"{lam.min():.0f}–{lam.max():.0f} nm, unilamellar, collection half-angle {acc:g}°", fontsize=9)
+            ax.grid(True, ls=':', alpha=0.6)
+            ax.legend(fontsize=8)
+            fig.tight_layout()
+            cv.draw()
+            info.config(text="\n".join(lines))
+            win.config(cursor='')
+
+        tk.Button(ctrl, text="Compute", command=calcola, bg='#fff9c4', font=('Arial', 9)).pack(side=tk.LEFT, padx=8)
+        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        info.pack(fill=tk.X, padx=8, pady=(0, 6))
+        calcola()
 
     def _sc_copia_equazione(self):
         """Copy the form and the current parameters to the clipboard, ready to paste into a report."""

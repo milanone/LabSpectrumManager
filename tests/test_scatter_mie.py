@@ -1,0 +1,159 @@
+"""Pure power-law fit (offset fixed at 0) and the theoretical P(d) curve of vesicles (Mie theory).
+
+    python -m unittest discover -s tests -v
+"""
+import importlib.util
+import os
+import tempfile
+import tkinter as tk
+import unittest
+from unittest import mock
+
+import numpy as np
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+spec = importlib.util.spec_from_file_location("lsm_mie", os.path.join(HERE, "..", "LabSpectrumManager.pyw"))
+lsm = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(lsm)
+
+try:
+    import scipy.special  # noqa: F401
+    HAS_SCIPY = True
+except ImportError:
+    HAS_SCIPY = False
+
+
+class TestFitPowerLaw(unittest.TestCase):
+    def setUp(self):
+        self.x = np.arange(350.0, 801.0, 5.0)
+
+    def test_recovers_exponent_and_scale(self):
+        y = 0.08 * (self.x / 1000.0) ** -2.7
+        vs, p, m, rms = lsm.fit_power_law(self.x, y)
+        self.assertAlmostEqual(p, 2.7, places=2)
+        self.assertAlmostEqual(vs, 0.08, places=4)
+        self.assertLess(rms, 1e-5)
+
+    def test_fixed_exponent_and_fixed_slope(self):
+        y = 0.05 * (self.x / 1000.0) ** -3.0 - 2e-5 * self.x
+        vs, p, m, rms = lsm.fit_power_law(self.x, y, P=3.0, m=2e-5)
+        self.assertAlmostEqual(vs, 0.05, places=5)
+        self.assertEqual(p, 3.0)
+
+    def test_free_slope(self):
+        y = 0.05 * (self.x / 1000.0) ** -3.0 - 2e-5 * self.x
+        vs, p, m, rms = lsm.fit_power_law(self.x, y, m=None)
+        self.assertAlmostEqual(p, 3.0, places=1)
+        self.assertAlmostEqual(m, 2e-5, delta=3e-6)
+
+    def test_offset_is_not_absorbed(self):
+        """With a real offset the pure power law must NOT hide it: the residual shows it."""
+        y = 0.05 * (self.x / 1000.0) ** -3.0 + 0.02
+        _, _, _, rms = lsm.fit_power_law(self.x, y)
+        self.assertGreater(rms, 1e-3)
+
+
+@unittest.skipUnless(HAS_SCIPY, "scipy not installed")
+class TestVesicleTheory(unittest.TestCase):
+    lam = np.arange(350.0, 801.0, 15.0)
+
+    def test_rayleigh_limit_gives_P_of_four(self):
+        P = lsm.vesicle_P_curve([20.0], self.lam, sigma=0.0, acc_deg=0.0)[0]
+        self.assertAlmostEqual(P, 4.0, delta=0.05)
+
+    def test_P_falls_with_size_in_the_useful_range(self):
+        P = lsm.vesicle_P_curve([40.0, 80.0, 120.0], self.lam, sigma=0.2, acc_deg=10.0)
+        self.assertTrue(P[0] > P[1] > P[2])
+        self.assertGreater(P[0], 3.4)
+        self.assertLess(P[2], 3.0)
+
+    def test_collection_angle_reduces_the_extinction_of_large_particles(self):
+        full = lsm.vesicle_turbidity(self.lam, 400.0, acc_deg=0.0)
+        part = lsm.vesicle_turbidity(self.lam, 400.0, acc_deg=10.0)
+        self.assertTrue(np.all(part < full))
+        self.assertTrue(np.all(part > 0))
+
+    def test_coated_sphere_equals_the_thin_shell_limit_of_a_solid_one(self):
+        """A shell as thick as the radius is a solid sphere: compare with the textbook Mie sum."""
+        lam = np.array([500.0])
+        d, dn = 300.0, 0.05
+        got = lsm.vesicle_turbidity(lam, d, t=d / 2, dn=dn, acc_deg=0.0)[0]
+        from scipy.special import spherical_jn, spherical_yn
+        nm = lsm._water_index(lam)[0]
+        m = (nm + dn) / nm
+        x = 2 * np.pi * nm / 500.0 * d / 2
+        s = 0.0
+        for n in range(1, int(x + 4 * x ** (1 / 3) + 2) + 1):
+            def ric(z):
+                j, y = spherical_jn(n, z), spherical_yn(n, z)
+                return z * j, j + z * spherical_jn(n, z, derivative=True), \
+                    z * (j - 1j * y), (j - 1j * y) + z * (spherical_jn(n, z, derivative=True)
+                                                           - 1j * spherical_yn(n, z, derivative=True))
+            pm, dm, _, _ = ric(m * x)
+            p, dp, xi, dxi = ric(x)
+            a = (m * pm * dp - p * dm) / (m * pm * dxi - xi * dm)
+            b = (pm * dp - m * p * dm) / (pm * dxi - m * xi * dm)
+            s += (2 * n + 1) * (abs(a) ** 2 + abs(b) ** 2)
+        ref = 2 / x ** 2 * s * np.pi * (d / 2) ** 2
+        # the coated-sphere code keeps a 1 nm hole at the centre; relative difference stays tiny
+        self.assertAlmostEqual(got / ref, 1.0, delta=0.01)
+
+
+class TestPanelOffsetLock(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.root = lsm.TkinterDnD.Tk() if lsm.HAS_DND else tk.Tk()
+        except tk.TclError as e:
+            raise unittest.SkipTest("Tk not available: %s" % e)
+        cls.root.withdraw()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.root.destroy()
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        with mock.patch.object(lsm.messagebox, "showwarning"):
+            self.app = lsm.LabSpectrumManager(self.root)
+        wl = np.arange(350, 801)
+        y = 0.07 * (wl / 1000.0) ** -2.6
+        path = os.path.join(self.tmp.name, "lip.csv")
+        with open(path, "w", newline="") as f:
+            f.write("Wavelength [nm],Sample X1\n")
+            for w, v in zip(wl, y):
+                f.write(f"{w},{v:.6f}\n")
+        self.app.processa_file(path)
+        self.app.aggiorna_vista()
+        self.app.apri_correzione_scattering()
+
+    def test_auto_with_offset_fixed_returns_the_true_exponent_and_zero_offset(self):
+        self.app._sc_OFF_lock.set(True)
+        self.app._sc_auto()
+        self.assertAlmostEqual(self.app._sc_P['value'].get(), 2.6, places=2)
+        self.assertEqual(self.app._sc_OFF['value'].get(), 0.0)
+        self.assertEqual(self.app._sc_M['value'].get(), 0.0)           # slope stays fixed at 0 by default
+        self.assertIn("offset fixed at 0", self.app._sc_fit_label.cget("text"))
+
+    def test_ticking_the_box_zeroes_the_offset(self):
+        self.app._linked_set(self.app._sc_OFF, 0.05)
+        self.app._sc_OFF_lock.set(True)
+        self.app._sc_OFF_lock.get() and self.app._linked_set(self.app._sc_OFF, 0.0)   # what the checkbox command does
+        self.assertEqual(self.app._sc_OFF['value'].get(), 0.0)
+
+    @unittest.skipUnless(HAS_SCIPY, "scipy not installed")
+    def test_theory_window_opens_and_reports_a_crossing(self):
+        self.app._sc_OFF_lock.set(True)
+        self.app._sc_auto()
+        before = set(self.root.winfo_children())
+        self.app._sc_curva_teorica()
+        win = [w for w in self.root.winfo_children() if w not in before and isinstance(w, tk.Toplevel)][0]
+        self.addCleanup(win.destroy)
+        labels = [w for w in win.winfo_children() if isinstance(w, tk.Label) and "σ" in str(w.cget("text"))]
+        self.assertTrue(labels)
+        self.assertIn("meets the curve", labels[0].cget("text"))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -76,4 +76,15 @@ Il pulsante "Auto (fit window)" stima i parametri risolvendo un problema di mini
 4. Se si vuole forzare un regime fisico noto a priori (es. P=4 per particelle molto piccole), spuntare **"fix P"**, impostare il preset desiderato e rilanciare Auto: verranno ottimizzati solo VS (e OFF, M).
 5. Usare **Offset** per rifiniture manuali, tipicamente per azzerare la baseline in una zona priva di assorbanza reale (es. > 750 nm per molti cromofori biologici).
 
+### Offset bloccato a 0 e curva P(d) dei liposomi
+
+Per particelle che non assorbono (liposomi) la legge pura `VS·(λ/1000)^(−P)` è il modello giusto, e un offset libero ne assorbe parte della curvatura abbassando P di 0.3-0.7 (a 60-120 nm). Spuntando **"fix offset = 0"**, **Auto** esegue un fit ai minimi quadrati semplice (senza il vincolo traccia ≤ spettro, che senza offset da abbassare spingerebbe la traccia sotto i dati e distorcerebbe P), con P libero e pendenza bloccata a 0. Il residuo mostra se la baseline è davvero nulla.
+
+Il pulsante **"P vs size (theory)..."** calcola, con la teoria di Mie per una vescicola (guscio di 4.5 nm, Δn 0.12, acqua dentro e fuori) e popolazione log-normale (σ 0.2 e 0.3), il P che lo stesso fit dà sullo spettro teorico di vescicole di ogni diametro, nella finestra di fit corrente, con l'angolo di semiapertura di raccolta dello strumento (10° per lo spettrofotometro usato finora; la luce diffusa entro quell'angolo arriva al rivelatore e non conta come estinzione). La retta rossa è il P del pannello: dove incontra la curva sono le dimensioni compatibili.
+
+- Rayleigh (P = 4) vale solo sotto circa 30 nm; a 120 nm P è ≈ 2.6-2.7, quindi P = 4 non è il valore atteso.
+- Tra circa 40 e 130 nm la curva scende in modo netto (≈ −0.5 ogni 20 nm): P determina la dimensione. Sopra 130-150 nm è piatta (2.4-2.6): P non la determina, serve l'ampiezza a concentrazione nota o il DLS.
+- La curva dipende da angolo di raccolta, spessore e indice del guscio, ma poco: l'angolo conta soprattutto sopra 200 nm.
+- Richiede `scipy` (solo per questo calcolo). Verificato su tre campioni POPC-colesterolo-PEG, confrontati con il DLS: un campione di 177 nm concorda, uno di 126 nm (DLS) dà ~80 nm dallo spettro. Il modello è unilamellare: vescicole multilamellari hanno ampiezza maggiore.
+
 > La stima dei parametri combina un auto-fit vincolato, che copre il caso generale, con l'intervento manuale — lock di P e/o M, regolazione fine dei singoli slider — per casi limite o per imporre un regime fisico noto a priori.
