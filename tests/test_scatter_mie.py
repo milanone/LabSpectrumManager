@@ -179,15 +179,38 @@ class TestPanelOffsetLock(unittest.TestCase):
         self.assertIn("meets the curve", labels[0].cget("text"))
 
 
-    @unittest.skipUnless(HAS_SCIPY, "scipy not installed")
-    def test_amplitude_window_opens_and_reports_lamellae(self):
+    def open_simulator(self, x, y):
+        """Open the simulator on the spectrum (x, y) as the panel holds it; returns the window and its field variables."""
+        self.app._sc_x, self.app._sc_y = np.asarray(x, float), np.asarray(y, float)
         before = set(self.root.winfo_children())
-        self.app._sc_ampiezza_lamelle()
+        self.app._sc_simulatore()
         win = [w for w in self.root.winfo_children() if w not in before and isinstance(w, tk.Toplevel)][0]
         self.addCleanup(win.destroy)
-        text = [w.cget("text") for w in win.winfo_children() if isinstance(w, tk.Label)][0]
-        self.assertIn("Measured A(500 nm)", text)
-        self.assertIn("lamellae", text)
+        return win
+
+    @unittest.skipUnless(HAS_SCIPY, "scipy not installed")
+    def test_simulator_overlays_theory_and_reports_the_agreement(self):
+        lam = np.arange(350.0, 801.0, 5.0)
+        truth = lsm.vesicle_amplitude(lam, 120.0, 0.2, 1, 10.0 / 40, 1.0)          # 10 mg/mL, 1:40, 1 cm
+        win = self.open_simulator(lam, truth)
+        v = win._sim_vars
+        v['dil'].set('40'); v['d'].set('120')
+        win._sim_update()
+        text = [w.cget("text") for w in win.winfo_children() if isinstance(w, tk.Label)][-1]
+        self.assertIn("rms residual", text)
+        rms = float(text.split("rms residual")[1].split()[0])
+        self.assertLess(rms, 1e-3 * truth.max())                    # same model, same parameters: no residual
+
+    @unittest.skipUnless(HAS_SCIPY, "scipy not installed")
+    def test_simulator_fit_recovers_size_and_amplitude(self):
+        lam = np.arange(350.0, 801.0, 5.0)
+        truth = 1.7 * lsm.vesicle_amplitude(lam, 130.0, 0.2, 1, 10.0 / 40, 1.0)      # 1.7x the lipid assumed
+        win = self.open_simulator(lam, truth)
+        v = win._sim_vars
+        v['dil'].set('40')
+        win._sim_fit(True)
+        self.assertAlmostEqual(float(v['d'].get()), 130.0, delta=3.0)
+        self.assertAlmostEqual(float(v['k'].get()), 1.7, delta=0.05)
 
 
 if __name__ == "__main__":

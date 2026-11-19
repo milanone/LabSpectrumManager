@@ -647,8 +647,8 @@ class LabSpectrumManager:
                   command=self._sc_auto, bg='#fff9c4', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(2, 0))
         tk.Button(self.f_scattering, text="P vs size (theory)...",
                   command=self._sc_curva_teorica, bg='#e1f5fe', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(2, 0))
-        tk.Button(self.f_scattering, text="Amplitude & lamellae...",
-                  command=self._sc_ampiezza_lamelle, bg='#e1f5fe', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(2, 0))
+        tk.Button(self.f_scattering, text="Spectrum simulator...",
+                  command=self._sc_simulatore, bg='#e1f5fe', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(2, 0))
 
         # Pulsanti Apply / Cancel
         btn_sc = tk.Frame(self.f_scattering, bg=bg)
@@ -1028,114 +1028,171 @@ class LabSpectrumManager:
         info.pack(fill=tk.X, padx=8, pady=(0, 6))
         calcola()
 
-    # --- SCATTERING: absolute amplitude from the lipid concentration, and number of lamellae ---
-    def _sc_ampiezza_lamelle(self):
-        """Window comparing the measured absorbance at a reference wavelength with the one predicted from the lipid
-        concentration for n-lamellar vesicles (Mie theory, vesicle_amplitude): A(d) curves for n = 1, 2, 4, 7 with the
-        measured value as a line. For unilamellar vesicles (extrusion, 11 passes) the intersection with n = 1 gives the
-        size; for a known size, measured/predicted gives the equivalent number of lamellae (the amplitude is almost
-        proportional to n). The absolute scale depends on shell thickness x index (a factor 2-3) and on the lipid
-        concentration actually in the cuvette, so it is a consistency check more than a measurement."""
+    # --- SCATTERING: spectrum simulator (theory overlaid on the measurement, in absolute scale) ---
+    def _sc_simulatore(self):
+        """Window that overlays the theoretical spectrum of a suspension of n-lamellar vesicles (Mie theory,
+        vesicle_amplitude) on the measured one, in absolute scale: it is computed from the lipid concentration, the
+        dilution, the cuvette path, the size and width of the population, the number of lamellae, the shell and the
+        instrument collection half-angle, with no free scale. The residual (measured - theory) is drawn below and the
+        agreement is summed up (rms, best amplitude factor). Every field updates the plot; 'Fit size' finds the diameter
+        with the least rms at the given amplitude factor k, 'Fit size + amplitude' also solves k (k near 1 = the absolute
+        scale agrees; k near n_true/n = the lamellae or the lipid differ from the assumed ones). The absolute scale
+        depends on bilayer thickness x index (a factor 2-3): the shape is the robust part."""
         if self._sc_x is None:
             return
         try:
             import scipy.special  # noqa: F401  (needed by the Mie calculation)
         except ImportError:
-            messagebox.showwarning("Amplitude & lamellae", "Il calcolo di Mie richiede scipy (pip install scipy).")
+            messagebox.showwarning("Spectrum simulator", "Il calcolo di Mie richiede scipy (pip install scipy).")
             return
-        x, y = self._sc_x, self._sc_y
+        x, y = np.asarray(self._sc_x, float), np.asarray(self._sc_y, float)
+        lo0 = min(self._sc_vline_lo.get_xdata()[0], self._sc_vline_hi.get_xdata()[0])
+        hi0 = max(self._sc_vline_lo.get_xdata()[0], self._sc_vline_hi.get_xdata()[0])
         win = tk.Toplevel(self.root)
-        win.title("Amplitude & lamellae")
+        win.title("Spectrum simulator")
         bg = '#f0f4f7'
         win.configure(bg=bg)
         fields = (("Lipid stock (mg/mL)", 'c', '10'), ("Dilution (1:x)", 'dil', '1'), ("Lipid loss (%)", 'loss', '0'),
-                  ("Path (cm)", 'path', '1'), ("Wavelength (nm)", 'lam', '500'), ("Known size d (nm)", 'd', '126'),
-                  ("Width σ", 'sg', '0.2'), ("Half-angle (°)", 'acc', '10'), ("Bilayer (nm)", 't', '4.5'),
+                  ("Path (cm)", 'path', '1'), ("Diameter (nm)", 'd', '150'), ("Width σ", 'sg', '0.2'),
+                  ("Lamellae", 'n', '1'), ("Half-angle (°)", 'acc', '10'), ("Bilayer (nm)", 't', '4.5'),
                   ("Index excess", 'dn', '0.12'), ("Repeat (nm)", 'rep', '7'), ("Lipid MW", 'mw', '760.08'),
-                  ("Area/lipid (nm²)", 'area', '0.65'))
+                  ("Area/lipid (nm²)", 'area', '0.65'), ("Amplitude k", 'k', '1'), ("Offset", 'off', '0'),
+                  ("λ from (nm)", 'lo', f'{lo0:.0f}'), ("λ to (nm)", 'hi', f'{hi0:.0f}'))
         ctrl = tk.Frame(win, bg=bg)
         ctrl.pack(fill=tk.X, padx=8, pady=6)
         v = {}
         for i, (lab, key, val) in enumerate(fields):
-            r, c = divmod(i, 4)
+            r, c = divmod(i, 5)
             tk.Label(ctrl, text=lab, bg=bg, font=('Arial', 8)).grid(row=r, column=2 * c, sticky='e', padx=(6, 2), pady=1)
             v[key] = tk.StringVar(value=val)
             tk.Entry(ctrl, textvariable=v[key], width=8).grid(row=r, column=2 * c + 1, sticky='w', pady=1)
-        info = tk.Label(win, text="", bg=bg, font=('Consolas', 8), justify=tk.LEFT, wraplength=700)
         from matplotlib.figure import Figure
-        fig = Figure(figsize=(7.0, 4.2), dpi=100)
-        ax = fig.add_subplot(111)
+        fig = Figure(figsize=(8.0, 5.4), dpi=100)
+        ax = fig.add_subplot(211)
+        axr = fig.add_subplot(212, sharex=ax)
         cv = FigureCanvasTkAgg(fig, master=win)
+        info = tk.Label(win, text="", bg=bg, font=('Consolas', 8), justify=tk.LEFT, wraplength=760)
+        state = {'after': None, 'busy': False}
 
-        def calcola():
+        def params():
             try:
-                p = {k: float(s.get().replace(',', '.')) for k, s in v.items()}
+                p = {k: float(s_.get().replace(',', '.')) for k, s_ in v.items()}
             except ValueError:
-                messagebox.showwarning("Amplitude & lamellae", "Valori non numerici.", parent=win)
+                return None
+            p['n'] = int(round(p['n']))
+            if (min(p['c'], p['dil'], p['path'], p['d'], p['t'], p['rep'], p['mw'], p['area']) <= 0 or p['sg'] < 0
+                    or p['n'] < 1 or p['acc'] < 0 or p['hi'] <= p['lo']):
+                return None
+            return p
+
+        def grid(p):
+            m = (x >= p['lo']) & (x <= p['hi'])
+            xs = x[m]
+            if len(xs) < 3:
+                return None, None, None
+            step = max(1, len(xs) // 60)             # <= ~60 wavelengths for the theory (smooth, and Mie is slow)
+            return xs, y[m], xs[::step]
+
+        def base(p, d, lamg):
+            """Theoretical absorbance with k = 1 and no offset (absolute, from the lipid in the cuvette)."""
+            conc = p['c'] / p['dil'] * (1 - p['loss'] / 100.0)
+            return vesicle_amplitude(lamg, d, p['sg'], p['n'], conc, p['path'], p['t'], p['dn'], p['rep'],
+                                     p['acc'], p['mw'], p['area'])
+
+        def update(*_):
+            state['after'] = None
+            p = params()
+            if p is None or state['busy']:
                 return
-            if min(p['c'], p['dil'], p['path'], p['d'], p['t'], p['rep'], p['mw'], p['area']) <= 0 or p['sg'] < 0:
-                messagebox.showwarning("Amplitude & lamellae", "Valori non validi.", parent=win)
-                return
-            if not (x.min() <= p['lam'] <= x.max()):
-                messagebox.showwarning("Amplitude & lamellae", "La lunghezza d'onda è fuori dallo spettro.", parent=win)
+            xs, ys, lamg = grid(p)
+            if xs is None:
                 return
             win.config(cursor='watch')
             win.update_idletasks()
-            conc = p['c'] / p['dil'] * (1 - p['loss'] / 100.0)          # lipid in the cuvette (mg/mL)
-            lam = np.array([p['lam']])
-            A_meas = float(np.interp(p['lam'], x, y))
-
-            def amp(d, n):
-                return float(vesicle_amplitude(lam, d, p['sg'], int(n), conc, p['path'], p['t'], p['dn'], p['rep'],
-                                               p['acc'], p['mw'], p['area'])[0])
-
-            ds = np.array([40, 50, 60, 80, 100, 126, 150, 200, 250, 300, 400], float)
+            A = base(p, p['d'], lamg)
+            ym = np.interp(lamg, xs, ys)
+            th = p['k'] * A + p['off']
+            rms = float(np.sqrt(np.mean((ym - th) ** 2)))
+            kb = float(A @ (ym - p['off']) / (A @ A))
+            rmsb = float(np.sqrt(np.mean((ym - p['off'] - kb * A) ** 2)))
             ax.clear()
-            curves = {}
-            for n in (1, 2, 4, 7):
-                curves[n] = np.array([amp(d, n) for d in ds])
-                ax.plot(ds, curves[n], 'o-', ms=3, label=f'{n} lamella' + ('e' if n > 1 else ''))
-            ax.axhline(A_meas, color='red', ls='--', lw=1, label=f'measured A({p["lam"]:.0f}) = {A_meas:.4f}')
-            ax.axvline(p['d'], color='grey', ls=':', lw=1)
-            ax.set_xlabel("Vesicle diameter (nm)")
-            ax.set_ylabel(f"A at {p['lam']:.0f} nm, {p['path']:g} cm, {conc:.3g} mg/mL lipid")
-            ax.set_yscale('log')
-            ax.grid(True, ls=':', alpha=0.6, which='both')
+            axr.clear()
+            ax.plot(xs, ys, color='steelblue', lw=1.5, label='measured')
+            ax.plot(lamg, th, color='crimson', lw=1.5, label='theory')
+            ax.set_ylabel("Absorbance")
+            ax.grid(True, ls=':', alpha=0.6)
             ax.legend(fontsize=8)
+            axr.plot(lamg, ym - th, color='black', lw=1)
+            axr.axhline(0, color='grey', lw=0.8)
+            axr.set_xlabel("Wavelength (nm)")
+            axr.set_ylabel("measured − theory")
+            axr.grid(True, ls=':', alpha=0.6)
             fig.tight_layout()
             cv.draw()
-            lines = [f"Lipid in the cuvette: {conc:.3g} mg/mL (stock {p['c']:g} mg/mL, 1:{p['dil']:g}, "
-                     f"loss {p['loss']:g}%). Measured A({p['lam']:.0f} nm) = {A_meas:.4f} (spectrum as loaded)."]
-            c1 = curves[1]
-            cross = [ds[i] + (ds[i + 1] - ds[i]) * (A_meas - c1[i]) / (c1[i + 1] - c1[i])
-                     for i in range(len(ds) - 1) if (c1[i] - A_meas) * (c1[i + 1] - A_meas) <= 0 and c1[i] != c1[i + 1]]
-            lines.append(("1 lamella matches the measured A at d = " + ", ".join(f"{c:.0f}" for c in cross) + " nm.")
-                         if cross else ("1 lamella stays below the measured A up to 400 nm." if A_meas > c1.max()
-                                        else "1 lamella is already above the measured A at 40 nm."))
-            a1 = amp(p['d'], 1)
-            ns = np.arange(1, 13)
-            an = np.array([amp(p['d'], n) for n in ns])
-            if A_meas <= an[0]:
-                eq = A_meas / a1
-                lines.append(f"At d = {p['d']:g} nm: predicted for 1 lamella {a1:.4f}; measured/predicted = {eq:.2f} "
-                             f"(equivalent lamellae ≈ {eq:.1f}, i.e. unilamellar or fewer lipids than assumed).")
-            elif A_meas > an[-1]:
-                lines.append(f"At d = {p['d']:g} nm: predicted for 1 lamella {a1:.4f}; the measurement exceeds even "
-                             f"12 lamellae ({an[-1]:.4f}).")
-            else:
-                eq = float(np.interp(A_meas, an, ns))
-                lines.append(f"At d = {p['d']:g} nm: predicted for 1 lamella {a1:.4f}; measured/predicted = "
-                             f"{A_meas / a1:.2f}, equivalent lamellae ≈ {eq:.1f}.")
-            lines.append("The absolute scale is uncertain by a factor of about 2-3 (bilayer thickness x index) and "
-                         "follows the lipid really in the cuvette: read it as a consistency check.")
-            info.config(text="\n".join(lines))
+            conc = p['c'] / p['dil'] * (1 - p['loss'] / 100.0)
+            info.config(text=(
+                f"Lipid in the cuvette {conc:.3g} mg/mL; {p['n']} lamella{'e' if p['n'] > 1 else ''}, d = {p['d']:g} nm, "
+                f"σ = {p['sg']:g}, half-angle {p['acc']:g}°.\n"
+                f"rms residual {rms:.4g}   |   amplitude factor that minimises it: k = {kb:.3g} (rms {rmsb:.4g}); "
+                f"k = 1 means that the absolute scale agrees."))
             win.config(cursor='')
 
-        tk.Button(ctrl, text="Compute", command=calcola, bg='#fff9c4', font=('Arial', 9)).grid(
-            row=0, column=8, rowspan=2, padx=10)
+        def schedule(*_):
+            if state['after'] is not None:
+                win.after_cancel(state['after'])
+            state['after'] = win.after(450, update)
+
+        for s_ in v.values():
+            s_.trace_add('write', schedule)
+
+        def fit(free_k):
+            p = params()
+            if p is None:
+                return
+            xs, ys, lamg = grid(p)
+            if xs is None:
+                return
+            ym = np.interp(lamg, xs, ys)
+            state['busy'] = True
+            win.config(cursor='watch')
+            win.update_idletasks()
+            cache = {}
+
+            def obj(d):
+                if d not in cache:
+                    A = base(p, d, lamg)
+                    kk = float(A @ (ym - p['off']) / (A @ A)) if free_k else p['k']
+                    cache[d] = (float(np.sqrt(np.mean((ym - p['off'] - kk * A) ** 2))), kk)
+                return cache[d][0]
+
+            from scipy.optimize import minimize_scalar
+            ds = np.geomspace(30, 900, 14)
+            r = [obj(float(d)) for d in ds]
+            i = int(np.argmin(r))
+            res = minimize_scalar(lambda d: obj(float(d)), bounds=(ds[max(i - 1, 0)], ds[min(i + 1, len(ds) - 1)]),
+                                  method='bounded', options={'xatol': 0.5})
+            d_best = float(res.x)
+            obj(d_best)
+            state['busy'] = False
+            v['d'].set(f"{d_best:.1f}")
+            if free_k:
+                v['k'].set(f"{cache[d_best][1]:.3f}")
+            win.config(cursor='')
+            update()
+
+        bf = tk.Frame(ctrl, bg=bg)
+        bf.grid(row=0, column=10, rowspan=3, padx=10)
+        tk.Button(bf, text="Fit size", command=lambda: fit(False), bg='#fff9c4', font=('Arial', 9)).pack(fill=tk.X, pady=1)
+        tk.Button(bf, text="Fit size + amplitude", command=lambda: fit(True), bg='#fff9c4',
+                  font=('Arial', 9)).pack(fill=tk.X, pady=1)
+        tk.Button(bf, text="Update", command=update, font=('Arial', 9)).pack(fill=tk.X, pady=1)
+        tb = tk.Frame(win)
+        tb.pack(side=tk.BOTTOM, fill=tk.X)
+        NavigationToolbar2Tk(cv, tb)
+        info.pack(side=tk.BOTTOM, fill=tk.X, padx=8, pady=(0, 4))
         cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        info.pack(fill=tk.X, padx=8, pady=(0, 6))
-        calcola()
+        win._sim_vars, win._sim_fit, win._sim_update = v, fit, update      # handles for the tests
+        update()
 
     def _sc_copia_equazione(self):
         """Copy the form and the current parameters to the clipboard, ready to paste into a report."""
