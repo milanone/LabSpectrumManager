@@ -31,12 +31,16 @@ build_ole = load("vspd_tests", "test_vspd_reader.py").build_ole
 DLS_DIR = os.path.join(HERE, "..", "spettri di esempio", "20261118 lipo vuoti varie size DLS")
 
 
-def nsz_bytes(values, extra=b''):
-    """Streams in the layout of a real file: 'Key' + 0 byte + float32, split over two streams."""
+def nsz_bytes(values, ints=None, extra=b''):
+    """Streams in the layout of a real file: 'Key' + 0 byte + float32 (int32 for the `ints`), split over two streams."""
     def rec(k, v):
         return k.encode() + b'\0' + struct.pack('<f', v) + b'\0\3\x0c\0'
+
+    def rec_int(k, v):
+        return k.encode() + b'\0' + struct.pack('<i', v) + b'\0\3\x0c\0'
     calc = b''.join(rec(k, v) for k, v in values.items() if k.startswith(('Cum', 'Calc')))
-    meas = b''.join(rec(k, v) for k, v in values.items() if k.startswith('Meas')) + extra
+    meas = (b''.join(rec(k, v) for k, v in values.items() if k.startswith('Meas'))
+            + b''.join(rec_int(k, v) for k, v in (ints or {}).items()) + extra)
     return build_ole({'Base1': calc, 'Base34': meas})
 
 
@@ -56,6 +60,15 @@ class TestReadNsz(unittest.TestCase):
         self.assertAlmostEqual(r['solvent_index'], 1.333, places=5)
         self.assertAlmostEqual(r['particle_index'], 1.6, places=5)
         self.assertEqual(r['angle'], 90.0)
+
+    def test_transmission_before_and_after_are_read_as_integers(self):
+        r = lsm.read_nsz(nsz_bytes(GOOD, {'MeasBeforeLightVal': 27454, 'MeasAfterLightVal': 27462}))
+        self.assertEqual((r['transmission_before'], r['transmission_after']), (27454.0, 27462.0))
+
+    def test_transmission_out_of_range_is_dropped(self):
+        r = lsm.read_nsz(nsz_bytes(GOOD, {'MeasBeforeLightVal': -5, 'MeasAfterLightVal': 27462}))
+        self.assertNotIn('transmission_before', r)
+        self.assertIn('transmission_after', r)
 
     def test_missing_optional_keys_are_left_out(self):
         r = lsm.read_nsz(nsz_bytes({'Cum_fMean': 50.0, 'Cum_fPi': 0.2}))
@@ -78,10 +91,10 @@ class TestReadNsz(unittest.TestCase):
     @unittest.skipUnless(os.path.isdir(DLS_DIR), "real DLS sample not present")
     def test_real_files_match_the_csv_export(self):
         # (file, Z-average, PI, mean, S.D., mode) as in the instrument's own CSV of the same measurement
-        expected = (("lipo 100 nm 1a10 in PBS_0829.nsz", 125.6, 0.096, 134.2, 34.6, 126.2),
-                    ("lipo 200 nm 1a40 in PBS_0828.nsz", 177.1, 0.185, 187.0, 42.5, 181.3),
-                    ("lipo 450 nm 1a40 in PBS_0826.nsz", 299.0, 0.383, 412.8, 96.6, 380.4))
-        for fn, z, pi, mean, sd, mode in expected:
+        expected = (("lipo 100 nm 1a10 in PBS_0829.nsz", 125.6, 0.096, 134.2, 34.6, 126.2, 27454, 27462),
+                    ("lipo 200 nm 1a40 in PBS_0828.nsz", 177.1, 0.185, 187.0, 42.5, 181.3, 26578, 26534),
+                    ("lipo 450 nm 1a40 in PBS_0826.nsz", 299.0, 0.383, 412.8, 96.6, 380.4, 12372, 12529))
+        for fn, z, pi, mean, sd, mode, t0, t1 in expected:
             with open(os.path.join(DLS_DIR, fn), 'rb') as f:
                 r = lsm.read_nsz(f.read())
             self.assertAlmostEqual(r['z_average'], z, delta=0.06, msg=fn)
@@ -89,6 +102,8 @@ class TestReadNsz(unittest.TestCase):
             self.assertAlmostEqual(r['mean'], mean, delta=0.06, msg=fn)
             self.assertAlmostEqual(r['sd'], sd, delta=0.06, msg=fn)
             self.assertAlmostEqual(r['mode'], mode, delta=0.06, msg=fn)
+            # transmitted intensity before/after: the values of the CSV export and of the instrument window (photos)
+            self.assertEqual((r['transmission_before'], r['transmission_after']), (t0, t1), msg=fn)
             self.assertEqual((round(r['solvent_index'], 3), round(r['particle_index'], 2), r['angle']), (1.333, 1.6, 90.0))
 
 
@@ -121,7 +136,7 @@ class TestAttach(unittest.TestCase):
         self.name = next(iter(self.app.spectra))
         self.nsz = os.path.join(self.tmp.name, "r.nsz")
         with open(self.nsz, 'wb') as f:
-            f.write(nsz_bytes(GOOD))
+            f.write(nsz_bytes(GOOD, {'MeasBeforeLightVal': 27454, 'MeasAfterLightVal': 27462}))
 
     def test_attach_adds_the_dls_rows_to_the_metadata(self):
         self.assertTrue(self.app._allega_dls_file(self.name, self.nsz))
@@ -129,6 +144,7 @@ class TestAttach(unittest.TestCase):
         self.assertEqual(info['DLS Z-average (nm)'], '126.0')
         self.assertEqual(info['DLS PI'], '0.100')
         self.assertEqual(info['DLS file'], 'r.nsz')
+        self.assertEqual((info['DLS transmission before'], info['DLS transmission after']), ('27454', '27462'))
         self.assertIn('DLS Z-average (nm)', self.app.param_box.get('1.0', tk.END))
         self.assertTrue(self.app._dirty)
 

@@ -369,13 +369,18 @@ def lipid_mixture(chol_pct=0.0, peg_pct=0.0, mw_popc=760.08, area_popc=0.65, t_p
 _NSZ_KEYS = {'Cum_fMean': 'z_radius', 'Cum_fPi': 'pi', 'CalcMean[0]': 'mean_radius', 'CalcSD[0]': 'sd_radius',
              'CalcMode': 'mode_radius', 'MeasAngle': 'angle', 'MeasHolderTemp': 'temperature',
              'MeasSolventVisco': 'viscosity', 'MeasSolventRef': 'solvent_index', 'MeasSampleRef': 'particle_index'}
+# Transmitted laser intensity before and after the measurement (instrument units): int32, not float32. The "after" value
+# close to the "before" one shows that the sample did not change (sediment, aggregate) during the measurement.
+_NSZ_INT_KEYS = {'MeasBeforeLightVal': 'transmission_before', 'MeasAfterLightVal': 'transmission_after'}
 
 
 def read_nsz(raw):
     """Result of a Horiba SZ-100 dynamic light scattering measurement (`.nsz`) as a dict of floats: z_average, pi,
     mean, sd, mode (nm, intensity-weighted; mean/sd/mode of the main peak), angle (deg), temperature (deg C), viscosity
     (mPa.s), solvent_index and particle_index (the refractive indices entered in the instrument software; the particle
-    one only serves to convert the distribution to volume or number, Z-average and PI do not use it). Keys that are
+    one only serves to convert the distribution to volume or number, Z-average and PI do not use it),
+    transmission_before and transmission_after (transmitted laser intensity before and after the measurement, int32
+    in the file, instrument units). Keys that are
     missing or out of range are left out. Raises ValueError if the file is not a DLS result (no Z-average found).
     Verified against the CSV export of the same measurements for four files (Z-average, PI, mean, S.D., mode, angle,
     temperature, viscosity); the indices are read as stored."""
@@ -393,6 +398,12 @@ def read_nsz(raw):
               'mode_radius': (0.05, 5e4), 'angle': (1, 180), 'temperature': (-10, 120), 'viscosity': (0.05, 100),
               'solvent_index': (1.0, 2.0), 'particle_index': (1.0, 3.5)}
     out = {k: v for k, v in found.items() if ranges[k][0] <= v <= ranges[k][1]}
+    for key, name in _NSZ_INT_KEYS.items():
+        m = re.search(re.escape(key.encode()) + b'\x00(.{4})', blob, re.S)
+        if m:
+            v = struct.unpack('<i', m.group(1))[0]
+            if 1 <= v <= 10 ** 7:
+                out[name] = float(v)
     if 'z_radius' not in out:
         raise ValueError("no DLS result found in the file (Z-average missing)")
     for k in ('z', 'mean', 'sd', 'mode'):
@@ -405,7 +416,9 @@ def read_nsz(raw):
 _DLS_INFO = (('DLS Z-average (nm)', 'z_average', '{:.1f}'), ('DLS PI', 'pi', '{:.3f}'),
              ('DLS mean (nm)', 'mean', '{:.1f}'), ('DLS S.D. (nm)', 'sd', '{:.1f}'), ('DLS mode (nm)', 'mode', '{:.1f}'),
              ('DLS angle (deg)', 'angle', '{:.0f}'), ('DLS temperature (C)', 'temperature', '{:.1f}'),
-             ('DLS viscosity (mPa.s)', 'viscosity', '{:.3f}'), ('DLS solvent index', 'solvent_index', '{:.3f}'),
+             ('DLS viscosity (mPa.s)', 'viscosity', '{:.3f}'),
+             ('DLS transmission before', 'transmission_before', '{:.0f}'),
+             ('DLS transmission after', 'transmission_after', '{:.0f}'), ('DLS solvent index', 'solvent_index', '{:.3f}'),
              ('DLS particle index', 'particle_index', '{:.2f}'))
 
 
