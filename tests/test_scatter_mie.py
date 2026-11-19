@@ -123,6 +123,31 @@ class TestAmplitude(unittest.TestCase):
         self.assertTrue(a[0] < a[1] < a[2])
 
 
+@unittest.skipUnless(HAS_SCIPY, "scipy not installed")
+class TestComposition(unittest.TestCase):
+    def test_popc_alone_changes_nothing(self):
+        mx = lsm.lipid_mixture()
+        self.assertEqual((mx['mw'], mx['area'], mx['t'], mx['dn'], mx['peg_film']), (760.08, 0.65, 4.5, 0.12, 0.0))
+
+    def test_85_10_5_mixture(self):
+        mx = lsm.lipid_mixture(10, 5)
+        self.assertAlmostEqual(mx['mw'], 825.0, delta=0.5)            # 0.85*760.08 + 0.10*386.65 + 0.05*2805.5
+        self.assertAlmostEqual(mx['area'], 0.5915, places=3)
+        self.assertAlmostEqual(mx['t'], 4.9, places=6)
+        self.assertAlmostEqual(mx['peg_film'], 0.234, delta=0.01)     # nm of pure PEG per leaflet
+        self.assertGreater(mx['dn'], 0.12 + 0.01)                     # the PEG film adds polarisability
+
+    def test_fractions_above_100_percent_are_refused(self):
+        with self.assertRaises(ValueError):
+            lsm.lipid_mixture(60, 50)
+
+    def test_no_peg_leaflets_removes_the_film_term(self):
+        a = lsm.lipid_mixture(10, 5, peg_leaflets=0)
+        b = lsm.lipid_mixture(10, 5, peg_leaflets=2)
+        self.assertAlmostEqual(a['dn'], 0.12, places=9)
+        self.assertGreater(b['dn'], a['dn'])
+
+
 class TestPanelOffsetLock(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -200,6 +225,36 @@ class TestPanelOffsetLock(unittest.TestCase):
         self.assertIn("rms residual", text)
         rms = float(text.split("rms residual")[1].split()[0])
         self.assertLess(rms, 1e-3 * truth.max())                    # same model, same parameters: no residual
+
+    @unittest.skipUnless(HAS_SCIPY, "scipy not installed")
+    def test_simulator_composition_fields_change_the_theory(self):
+        lam = np.arange(350.0, 801.0, 10.0)
+        truth = lsm.vesicle_amplitude(lam, 150.0, 0.2, 1, 10.0 / 40, 1.0)
+        win = self.open_simulator(lam, truth)
+        v = win._sim_vars
+        v['dil'].set('40'); v['d'].set('150')
+        win._sim_update()
+        rms0 = float([w.cget("text") for w in win.winfo_children() if isinstance(w, tk.Label)][-1]
+                     .split("rms residual")[1].split()[0])
+        v['chol'].set('10'); v['peg'].set('5')
+        win._sim_update()
+        text = [w.cget("text") for w in win.winfo_children() if isinstance(w, tk.Label)][-1]
+        self.assertIn("Mixture 85/10/5 mol%", text)
+        rms1 = float(text.split("rms residual")[1].split()[0])
+        self.assertGreater(rms1, 5 * max(rms0, 1e-6))               # a different bilayer no longer matches POPC-only data
+
+    @unittest.skipUnless(HAS_SCIPY, "scipy not installed")
+    def test_every_simulator_field_has_a_help_text_that_can_be_shown(self):
+        lam = np.arange(350.0, 801.0, 10.0)
+        win = self.open_simulator(lam, lsm.vesicle_amplitude(lam, 150.0, 0.2, 1, 10.0, 1.0))
+        self.assertTrue(set(win._sim_vars) <= set(lsm.SIM_TIPS))
+        self.assertEqual(len(win._sim_tips), 2 * len(win._sim_vars) + 3)          # label + entry per field, 3 buttons
+        tip = next(t for t in win._sim_tips if t.text == lsm.SIM_TIPS['sg'])
+        tip._show()
+        self.assertIsNotNone(tip._tip)
+        self.assertIn("PDI", tip.text)
+        tip._hide()
+        self.assertIsNone(tip._tip)
 
     @unittest.skipUnless(HAS_SCIPY, "scipy not installed")
     def test_simulator_fit_recovers_size_and_amplitude(self):

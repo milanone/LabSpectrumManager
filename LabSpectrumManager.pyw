@@ -120,6 +120,95 @@ def scatter_equation(VS, P, M, OFF):
             + term(-M, "·λ") + term(OFF, "") + "   (λ in nm)")
 
 
+class ToolTip:
+    """Small yellow help box shown after the pointer rests on a widget for `delay` ms; hidden on leave or click."""
+
+    def __init__(self, widget, text, delay=500, wraplength=340):
+        self.widget, self.text, self.delay, self.wraplength = widget, text, delay, wraplength
+        self._after, self._tip = None, None
+        widget.bind('<Enter>', self._schedule, add='+')
+        widget.bind('<Leave>', self._hide, add='+')
+        widget.bind('<ButtonPress>', self._hide, add='+')
+
+    def _schedule(self, _event=None):
+        self._hide()
+        self._after = self.widget.after(self.delay, self._show)
+
+    def _show(self):
+        self._after = None
+        if self._tip is not None or not self.text:
+            return
+        x = self.widget.winfo_rootx() + 12
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
+        self._tip = tk.Toplevel(self.widget)
+        self._tip.wm_overrideredirect(True)
+        self._tip.wm_geometry(f"+{x}+{y}")
+        tk.Label(self._tip, text=self.text, justify=tk.LEFT, bg='#ffffe0', relief=tk.SOLID, borderwidth=1,
+                 font=('Arial', 8), wraplength=self.wraplength).pack()
+
+    def _hide(self, _event=None):
+        if self._after is not None:
+            self.widget.after_cancel(self._after)
+            self._after = None
+        if self._tip is not None:
+            self._tip.destroy()
+            self._tip = None
+
+
+# Help texts of the simulator fields (key -> text); the keys are those of the field table in _sc_simulatore()
+SIM_TIPS = {
+    'c': "Lipid concentration of the stock suspension, mg/mL (= g/L): the total lipid, cholesterol and PEG-lipid included.",
+    'dil': "Dilution of the stock in the cuvette: 40 means 1 part of stock in 40 parts in total. 1 = measured undiluted.",
+    'loss': "Percentage of the lipid lost during the preparation (extrusion, filtration). It lowers the concentration in "
+            "the cuvette and so the predicted amplitude.",
+    'path': "Optical path of the cuvette in cm. The predicted absorbance is proportional to it.",
+    'd': "Median outer diameter of the vesicle population, nm. 'Fit size' finds the value that agrees best with the "
+         "measurement.",
+    'sg': "Width σ of the log-normal size distribution: the spread of ln(diameter), about the relative standard "
+          "deviation of the size (0.2 = 20%). It is related to the DLS polydispersity index by PDI ≈ σ² "
+          "(σ 0.2 ≈ PDI 0.04, σ 0.3 ≈ PDI 0.09). A wider population smooths the oscillations of large particles.",
+    'n': "Number of concentric bilayers of each vesicle. Extruded vesicles (11 passes) are unilamellar (1). The "
+         "amplitude is roughly proportional to the number of lamellae at a given lipid concentration.",
+    'acc': "Collection half-angle of the instrument: the light scattered forward inside this cone still reaches the "
+           "detector, so it does not count as absorbance. It is not in the instrument specifications and is a "
+           "property of the geometry; about 10° fits the samples measured so far. It matters for particles larger "
+           "than about 150 nm (it lowers their apparent P) and not for small ones.",
+    't': "Thickness of the lipid (POPC) bilayer, nm, used as the scattering shell. In the simulator cholesterol "
+         "thickens it (+0.4 nm per 10 mol%).",
+    'dn': "Refractive index excess of the lipid shell over water (about 0.12 for a lipid bilayer). Together with the "
+          "thickness it sets the absolute amplitude, which goes roughly as (thickness × index excess)²: this is the "
+          "main uncertainty of the absolute scale (a factor 2-3).",
+    'rep': "Repeat distance of a multilamellar vesicle, nm: bilayer plus the water gap between two lamellae. Used only "
+           "for more than one lamella.",
+    'mw': "Molar mass of POPC, g/mol (760.08). With the other components it gives the mean molar mass of the mixture, "
+          "i.e. the number of lipid molecules in the cuvette.",
+    'area': "Area per POPC molecule in the bilayer, nm² (0.65). With the lipid concentration it gives the number of "
+            "lipids per vesicle, so the number of vesicles. Cholesterol reduces it (below).",
+    'k': "Amplitude factor multiplied by the theoretical spectrum. k = 1 is the pure prediction from the lipid "
+         "concentration. The value that would make theory and measurement agree is shown under the plot: it absorbs "
+         "the errors of the lipid amount (loss, concentration), of the shell (thickness × index) and of the number "
+         "of lamellae. 'Fit size + amplitude' sets it. A k near 1 means that the absolute scale agrees.",
+    'off': "Constant added to the theory (baseline or cuvette mismatch). 0 for a perfect blank.",
+    'chol': "Cholesterol, mol% of all the lipid molecules. Condenses the bilayer: smaller area per molecule and a "
+            "thicker bilayer (assumed -9% area and +0.4 nm per 10 mol%).",
+    'peg': "PEG-lipid (for example DSPE-PEG2000), mol% of all the lipid molecules. Its polymer corona adds a thin "
+           "film of PEG to the shell, which scatters a little.",
+    'pegmw': "Molar mass of the PEG chain, g/mol (2000). It gives the volume of polymer per chain.",
+    'peglmw': "Molar mass of the whole PEG-lipid, g/mol (2805.5 for DSPE-mPEG2000), used for the mean molar mass.",
+    'pegl': "Number of leaflets that carry PEG: 2 when the PEG-lipid was mixed in before the film was made, 1 if it is "
+            "only on the outer leaflet, 0 to ignore the PEG film.",
+    'lo': "Shortest wavelength of the window used for the comparison, nm. Below about 350-400 nm lipids and other "
+          "components may absorb, which the scattering model does not include.",
+    'hi': "Longest wavelength of the window used for the comparison, nm.",
+}
+SIM_BUTTON_TIPS = {
+    'fit': "Finds the diameter with the least rms residual, keeping every other field as typed, k included.",
+    'fitk': "Finds the diameter and, for each diameter, the amplitude factor k that minimises the rms residual. The "
+            "shape of the spectrum fixes the size; k then says how far the absolute scale is from the prediction.",
+    'update': "Redraws with the current values (the plot also updates by itself after each edit).",
+}
+
+
 def fit_power_law(x, y, P=None, m=0.0, p_lo=1.0, p_hi=5.0):
     """Least-squares fit of y = VS*(x/1000)^-P - m*x with NO offset (plain, unconstrained).
     P=None optimises the exponent in [p_lo, p_hi] (grid scan, VS and the slope are linear so they are solved
@@ -253,6 +342,26 @@ def vesicle_amplitude(lam, d, sigma, n=1, c_mg_ml=10.0, path_cm=1.0, t_bil=4.5, 
     rho = c_mg_ml / mw * 6.022e23 / 1e24                      # lipid molecules per nm^3
     C = vesicle_population(lam, d, sigma, T, dne, acc_deg, nbin)
     return path_cm * 1e7 / np.log(10) * rho / lipids * C
+
+
+def lipid_mixture(chol_pct=0.0, peg_pct=0.0, mw_popc=760.08, area_popc=0.65, t_popc=4.5, dn_popc=0.12,
+                  mw_chol=386.65, mw_pegl=2805.5, peg_mw=2000.0, peg_leaflets=2):
+    """Effective lipid, area and shell parameters of a POPC / cholesterol / PEG-lipid bilayer (mol%), for
+    vesicle_amplitude(): mean molar mass, mean area per molecule, bilayer thickness and shell index excess.
+    Assumptions (order-of-magnitude, not fitted): cholesterol condenses the bilayer, -9% of the area per molecule and
+    +0.4 nm of thickness per 10 mol%; the bilayer index excess is not changed by cholesterol; the PEG chains (volume from
+    the PEG mass at 1.2 g/cm^3, index excess 0.127 over water) are a thin film of polymer whose scattering adds to the
+    shell, peg_leaflets leaflets of it (2 when the PEG-lipid was mixed in before the film was made). A corona a few nm
+    thick is far thinner than the wavelength, so only its total polarisability matters, not its position or profile."""
+    xc, xp = chol_pct / 100.0, peg_pct / 100.0
+    if xc < 0 or xp < 0 or xc + xp > 1:
+        raise ValueError("the mole fractions must be >= 0 and add up to at most 100%")
+    mw = (1 - xc - xp) * mw_popc + xc * mw_chol + xp * mw_pegl
+    area = area_popc * (1 - 0.9 * xc)
+    t = t_popc + 4.0 * xc
+    film = (peg_mw / 1.2 / 6.022e23 * 1e21) * xp / area            # nm of pure PEG per leaflet
+    dn = dn_popc + peg_leaflets * film * 0.127 / t
+    return {'mw': mw, 'area': area, 't': t, 'dn': dn, 'peg_film': film}
 
 
 class LabSpectrumManager:
@@ -977,11 +1086,17 @@ class LabSpectrumManager:
         ctrl = tk.Frame(win, bg=bg)
         ctrl.pack(fill=tk.X, padx=8, pady=6)
         v = {}
+        tips = []
         for lab, key, val in (("Collection half-angle (°)", 'acc', '10'), ("Shell thickness (nm)", 't', '4.5'),
                               ("Shell index excess", 'dn', '0.12'), ("Width σ (log-normal)", 'sg', '0.2, 0.3')):
-            tk.Label(ctrl, text=lab, bg=bg, font=('Arial', 8)).pack(side=tk.LEFT, padx=(6, 2))
+            lbl = tk.Label(ctrl, text=lab, bg=bg, font=('Arial', 8))
+            lbl.pack(side=tk.LEFT, padx=(6, 2))
             v[key] = tk.StringVar(value=val)
-            tk.Entry(ctrl, textvariable=v[key], width=8 if key != 'sg' else 10).pack(side=tk.LEFT)
+            ent = tk.Entry(ctrl, textvariable=v[key], width=8 if key != 'sg' else 10)
+            ent.pack(side=tk.LEFT)
+            tips.extend(ToolTip(w_, SIM_TIPS[key] + (" Several values separated by commas draw one curve each."
+                                                    if key == 'sg' else "")) for w_ in (lbl, ent))
+        win._tips = tips
         info = tk.Label(win, text="", bg=bg, font=('Consolas', 8), justify=tk.LEFT, wraplength=620)
         from matplotlib.figure import Figure
         fig = Figure(figsize=(6.4, 4.2), dpi=100)
@@ -1054,18 +1169,25 @@ class LabSpectrumManager:
         win.configure(bg=bg)
         fields = (("Lipid stock (mg/mL)", 'c', '10'), ("Dilution (1:x)", 'dil', '1'), ("Lipid loss (%)", 'loss', '0'),
                   ("Path (cm)", 'path', '1'), ("Diameter (nm)", 'd', '150'), ("Width σ", 'sg', '0.2'),
-                  ("Lamellae", 'n', '1'), ("Half-angle (°)", 'acc', '10'), ("Bilayer (nm)", 't', '4.5'),
-                  ("Index excess", 'dn', '0.12'), ("Repeat (nm)", 'rep', '7'), ("Lipid MW", 'mw', '760.08'),
-                  ("Area/lipid (nm²)", 'area', '0.65'), ("Amplitude k", 'k', '1'), ("Offset", 'off', '0'),
+                  ("Lamellae", 'n', '1'), ("Half-angle (°)", 'acc', '10'), ("POPC bilayer (nm)", 't', '4.5'),
+                  ("Index excess", 'dn', '0.12'), ("Repeat (nm)", 'rep', '7'), ("POPC MW", 'mw', '760.08'),
+                  ("POPC area (nm²)", 'area', '0.65'), ("Amplitude k", 'k', '1'), ("Offset", 'off', '0'),
+                  ("Cholesterol (mol%)", 'chol', '0'), ("PEG-lipid (mol%)", 'peg', '0'),
+                  ("PEG chain MW", 'pegmw', '2000'), ("PEG-lipid MW", 'peglmw', '2805.5'),
+                  ("PEG leaflets (0-2)", 'pegl', '2'),
                   ("λ from (nm)", 'lo', f'{lo0:.0f}'), ("λ to (nm)", 'hi', f'{hi0:.0f}'))
         ctrl = tk.Frame(win, bg=bg)
         ctrl.pack(fill=tk.X, padx=8, pady=6)
         v = {}
+        tips = []                                     # kept referenced: a ToolTip is only held by its bindings
         for i, (lab, key, val) in enumerate(fields):
             r, c = divmod(i, 5)
-            tk.Label(ctrl, text=lab, bg=bg, font=('Arial', 8)).grid(row=r, column=2 * c, sticky='e', padx=(6, 2), pady=1)
+            lbl = tk.Label(ctrl, text=lab, bg=bg, font=('Arial', 8))
+            lbl.grid(row=r, column=2 * c, sticky='e', padx=(6, 2), pady=1)
             v[key] = tk.StringVar(value=val)
-            tk.Entry(ctrl, textvariable=v[key], width=8).grid(row=r, column=2 * c + 1, sticky='w', pady=1)
+            ent = tk.Entry(ctrl, textvariable=v[key], width=8)
+            ent.grid(row=r, column=2 * c + 1, sticky='w', pady=1)
+            tips.extend(ToolTip(w_, SIM_TIPS[key]) for w_ in (lbl, ent))
         from matplotlib.figure import Figure
         fig = Figure(figsize=(8.0, 5.4), dpi=100)
         ax = fig.add_subplot(211)
@@ -1080,8 +1202,14 @@ class LabSpectrumManager:
             except ValueError:
                 return None
             p['n'] = int(round(p['n']))
-            if (min(p['c'], p['dil'], p['path'], p['d'], p['t'], p['rep'], p['mw'], p['area']) <= 0 or p['sg'] < 0
-                    or p['n'] < 1 or p['acc'] < 0 or p['hi'] <= p['lo']):
+            if (min(p['c'], p['dil'], p['path'], p['d'], p['t'], p['rep'], p['mw'], p['area'], p['peglmw']) <= 0
+                    or p['sg'] < 0 or p['n'] < 1 or p['acc'] < 0 or p['hi'] <= p['lo'] or p['chol'] < 0
+                    or p['peg'] < 0 or p['pegmw'] < 0 or not 0 <= p['pegl'] <= 2):
+                return None
+            try:
+                p['mix'] = lipid_mixture(p['chol'], p['peg'], p['mw'], p['area'], p['t'], p['dn'], 386.65,
+                                         p['peglmw'], p['pegmw'], p['pegl'])
+            except ValueError:
                 return None
             return p
 
@@ -1096,8 +1224,9 @@ class LabSpectrumManager:
         def base(p, d, lamg):
             """Theoretical absorbance with k = 1 and no offset (absolute, from the lipid in the cuvette)."""
             conc = p['c'] / p['dil'] * (1 - p['loss'] / 100.0)
-            return vesicle_amplitude(lamg, d, p['sg'], p['n'], conc, p['path'], p['t'], p['dn'], p['rep'],
-                                     p['acc'], p['mw'], p['area'])
+            mx = p['mix']                              # POPC alone when cholesterol and PEG-lipid are 0
+            return vesicle_amplitude(lamg, d, p['sg'], p['n'], conc, p['path'], mx['t'], mx['dn'], p['rep'],
+                                     p['acc'], mx['mw'], mx['area'])
 
         def update(*_):
             state['after'] = None
@@ -1133,7 +1262,11 @@ class LabSpectrumManager:
             info.config(text=(
                 f"Lipid in the cuvette {conc:.3g} mg/mL; {p['n']} lamella{'e' if p['n'] > 1 else ''}, d = {p['d']:g} nm, "
                 f"σ = {p['sg']:g}, half-angle {p['acc']:g}°.\n"
-                f"rms residual {rms:.4g}   |   amplitude factor that minimises it: k = {kb:.3g} (rms {rmsb:.4g}); "
+                + (f"Mixture {100 - p['chol'] - p['peg']:g}/{p['chol']:g}/{p['peg']:g} mol% POPC/cholesterol/PEG-lipid: "
+                   f"mean molar mass {p['mix']['mw']:.0f}, area {p['mix']['area']:.3f} nm², bilayer {p['mix']['t']:.2f} nm, "
+                   f"shell index excess {p['mix']['dn']:.3f} (PEG film {p['mix']['peg_film']:.2f} nm per leaflet).\n"
+                   if (p['chol'] or p['peg']) else "")
+                + f"rms residual {rms:.4g}   |   amplitude factor that minimises it: k = {kb:.3g} (rms {rmsb:.4g}); "
                 f"k = 1 means that the absolute scale agrees."))
             win.config(cursor='')
 
@@ -1182,16 +1315,18 @@ class LabSpectrumManager:
 
         bf = tk.Frame(ctrl, bg=bg)
         bf.grid(row=0, column=10, rowspan=3, padx=10)
-        tk.Button(bf, text="Fit size", command=lambda: fit(False), bg='#fff9c4', font=('Arial', 9)).pack(fill=tk.X, pady=1)
-        tk.Button(bf, text="Fit size + amplitude", command=lambda: fit(True), bg='#fff9c4',
-                  font=('Arial', 9)).pack(fill=tk.X, pady=1)
-        tk.Button(bf, text="Update", command=update, font=('Arial', 9)).pack(fill=tk.X, pady=1)
+        b1 = tk.Button(bf, text="Fit size", command=lambda: fit(False), bg='#fff9c4', font=('Arial', 9))
+        b2 = tk.Button(bf, text="Fit size + amplitude", command=lambda: fit(True), bg='#fff9c4', font=('Arial', 9))
+        b3 = tk.Button(bf, text="Update", command=update, font=('Arial', 9))
+        for b_, key in ((b1, 'fit'), (b2, 'fitk'), (b3, 'update')):
+            b_.pack(fill=tk.X, pady=1)
+            tips.append(ToolTip(b_, SIM_BUTTON_TIPS[key]))
         tb = tk.Frame(win)
         tb.pack(side=tk.BOTTOM, fill=tk.X)
         NavigationToolbar2Tk(cv, tb)
         info.pack(side=tk.BOTTOM, fill=tk.X, padx=8, pady=(0, 4))
         cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        win._sim_vars, win._sim_fit, win._sim_update = v, fit, update      # handles for the tests
+        win._sim_vars, win._sim_fit, win._sim_update, win._sim_tips = v, fit, update, tips      # handles for the tests
         update()
 
     def _sc_copia_equazione(self):

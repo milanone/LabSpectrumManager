@@ -173,6 +173,10 @@ export — see Dependencies.
   so k is best calibrated on extruded unilamellar samples and then used to count the lamellae of others. On the three
   samples above: 100 nm (undiluted, 0.1 cm) fits at 80 nm with k = 1.4, 200 nm at 175 nm with k = 1.8 (DLS 177 nm), the
   3-pass 450 nm sample at ~600 nm with 7 lamellae and k = 1.0 (DLS 300-410 nm).
+  The lipid composition (mol% of cholesterol and of PEG-lipid; the rest is POPC) sets the mean molar mass, the area
+  per molecule, the bilayer thickness and a film of PEG in the shell (order-of-magnitude assumptions, stated in
+  `lipid_mixture()`): for a 85/10/5 POPC/cholesterol/DSPE-PEG2000 mixture k drops from 1.8 to 1.5 on the 200 nm
+  sample, the sizes do not change.
 - **Linear baseline** (FTIR) — a two-anchor baseline, draggable on the graph, for FTIR spectra.
 - **Adaptive baseline** — a lower envelope via iterated moving averages with a minimum
   constraint, adjustable window via a slider (from "flat" to "hugging the signal").
