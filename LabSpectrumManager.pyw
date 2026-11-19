@@ -156,13 +156,22 @@ class ToolTip:
 
 
 # Help texts of the simulator fields (key -> text); the keys are those of the field table in _sc_simulatore()
+SIM_MODES = ("Lipid vesicles", "Solid spheres (latex)")
 SIM_TIPS = {
-    'c': "Lipid concentration of the stock suspension, mg/mL (= g/L): the total lipid, cholesterol and PEG-lipid included.",
+    'mode': "Lipid vesicles: a thin lipid shell in water (the concentration is in mg/mL of lipid). Solid spheres: "
+            "homogeneous particles such as a polystyrene latex size standard (the concentration is in % w/v of solids). "
+            "The fields of the other type are greyed out.",
+    'nsph': "Refractive index of the solid particles at 589 nm (polystyrene 1.592). The dispersion with wavelength is "
+            "that of polystyrene, which is only an approximation for other materials.",
+    'rho': "Density of the solid particles, g/mL (polystyrene latex 1.055). With the % w/v it gives the number of "
+           "particles.",
+    'c': "Concentration of the stock suspension: lipid vesicles, mg/mL (= g/L) of the total lipid, cholesterol and "
+         "PEG-lipid included; solid spheres, % w/v of solids (4% w/v = 40 mg/mL).",
     'dil': "Dilution of the stock in the cuvette: 40 means 1 part of stock in 40 parts in total. 1 = measured undiluted.",
-    'loss': "Percentage of the lipid lost during the preparation (extrusion, filtration). It lowers the concentration in "
-            "the cuvette and so the predicted amplitude.",
+    'loss': "Percentage of the material lost during the preparation (extrusion, filtration, adsorption). It lowers the "
+            "concentration in the cuvette and so the predicted amplitude.",
     'path': "Optical path of the cuvette in cm. The predicted absorbance is proportional to it.",
-    'd': "Median outer diameter of the vesicle population, nm. 'Fit size' finds the value that agrees best with the "
+    'd': "Median outer diameter of the particle population, nm. 'Fit size' finds the value that agrees best with the "
          "measurement.",
     'sg': "Width σ of the log-normal size distribution: the spread of ln(diameter), about the relative standard "
           "deviation of the size (0.2 = 20%). It is related to the DLS polydispersity index by PDI ≈ σ² "
@@ -342,6 +351,35 @@ def vesicle_amplitude(lam, d, sigma, n=1, c_mg_ml=10.0, path_cm=1.0, t_bil=4.5, 
     rho = c_mg_ml / mw * 6.022e23 / 1e24                      # lipid molecules per nm^3
     C = vesicle_population(lam, d, sigma, T, dne, acc_deg, nbin)
     return path_cm * 1e7 / np.log(10) * rho / lipids * C
+
+
+def _ps_dispersion(lam):
+    """Wavelength dependence of the refractive index of polystyrene (Cauchy form, approximate coefficients, not verified
+    against a reference): n(lam) = 1.5718 + 0.0084/lam^2 with lam in um. Only differences are used."""
+    return 0.0084 / (np.asarray(lam, float) / 1000.0) ** 2
+
+
+def solid_sphere_amplitude(lam, d, sigma, c_pct_wv=1.0, path_cm=1.0, n589=1.592, density=1.055, acc_deg=10.0,
+                           nbin=11):
+    """Absorbance (as the spectrophotometer reads it) of a suspension of solid spheres in water at the wavelengths lam,
+    for example a polystyrene latex size standard: particles per cm^3 = mass concentration / (density x mean volume),
+    times the cross-section of one sphere (Mie theory, same collection half-angle as the vesicles), times the path.
+    d is the median diameter (nm) of a log-normal population of width sigma (about the CV of the size). c_pct_wv is the
+    solids concentration IN THE CUVETTE in % w/v (g per 100 mL). The index of the particles is n589 at 589 nm with the
+    dispersion of polystyrene (a different material gets the same dispersion shape: a simplification)."""
+    lam = np.asarray(lam, float)
+    dn = n589 + (_ps_dispersion(lam) - _ps_dispersion(589.0)) - _water_index(lam)       # index excess, per wavelength
+    if sigma > 0:
+        z = np.linspace(-2.5, 2.5, nbin)
+        w = np.exp(-z ** 2 / 2)
+        w /= w.sum()
+        diam = d * np.exp(sigma * z)
+    else:
+        w, diam = np.array([1.0]), np.array([float(d)])
+    volume = float(np.sum(w * np.pi / 6 * diam ** 3)) * 1e-21                           # cm^3, number-weighted mean
+    n_per_cm3 = (c_pct_wv / 100.0) / density / volume
+    C = vesicle_population(lam, d, sigma, d / 2, dn, acc_deg, nbin)                     # nm^2 (a 1 nm water core is kept)
+    return n_per_cm3 * C * 1e-14 * path_cm / np.log(10)
 
 
 def lipid_mixture(chol_pct=0.0, peg_pct=0.0, mw_popc=760.08, area_popc=0.65, t_popc=4.5, dn_popc=0.12,
@@ -1232,7 +1270,7 @@ class LabSpectrumManager:
         win.title("Spectrum simulator")
         bg = '#f0f4f7'
         win.configure(bg=bg)
-        fields = (("Lipid stock (mg/mL)", 'c', '10'), ("Dilution (1:x)", 'dil', '1'), ("Lipid loss (%)", 'loss', '0'),
+        fields = (("Lipid stock (mg/mL)", 'c', '10'), ("Dilution (1:x)", 'dil', '1'), ("Loss (%)", 'loss', '0'),
                   ("Path (cm)", 'path', '1'), ("Diameter (nm)", 'd', d0), ("Width σ", 'sg', sg0),
                   ("Lamellae", 'n', '1'), ("Half-angle (°)", 'acc', '10'), ("POPC bilayer (nm)", 't', '4.5'),
                   ("Index excess", 'dn', '0.12'), ("Repeat (nm)", 'rep', '7'), ("POPC MW", 'mw', '760.08'),
@@ -1240,18 +1278,30 @@ class LabSpectrumManager:
                   ("Cholesterol (mol%)", 'chol', '0'), ("PEG-lipid (mol%)", 'peg', '0'),
                   ("PEG chain MW", 'pegmw', '2000'), ("PEG-lipid MW", 'peglmw', '2805.5'),
                   ("PEG leaflets (0-2)", 'pegl', '2'),
+                  ("Particle index (589 nm)", 'nsph', '1.592'), ("Density (g/mL)", 'rho', '1.055'),
                   ("λ from (nm)", 'lo', f'{lo0:.0f}'), ("λ to (nm)", 'hi', f'{hi0:.0f}'))
+        # fields of each sample type: the others are greyed out
+        ves_only = ('n', 't', 'dn', 'rep', 'mw', 'area', 'chol', 'peg', 'pegmw', 'peglmw', 'pegl')
+        sph_only = ('nsph', 'rho')
         ctrl = tk.Frame(win, bg=bg)
         ctrl.pack(fill=tk.X, padx=8, pady=6)
         v = {}
+        ents, lbls = {}, {}
         tips = []                                     # kept referenced: a ToolTip is only held by its bindings
+        mode = tk.StringVar(value=SIM_MODES[0])
+        lbl_mode = tk.Label(ctrl, text="Sample type", bg=bg, font=('Arial', 8, 'bold'))
+        lbl_mode.grid(row=0, column=0, sticky='e', padx=(6, 2), pady=(0, 3))
+        cmb_mode = ttk.Combobox(ctrl, textvariable=mode, values=SIM_MODES, state='readonly', width=22)
+        cmb_mode.grid(row=0, column=1, columnspan=3, sticky='w', pady=(0, 3))
+        tips.extend(ToolTip(w_, SIM_TIPS['mode']) for w_ in (lbl_mode, cmb_mode))
         for i, (lab, key, val) in enumerate(fields):
             r, c = divmod(i, 5)
             lbl = tk.Label(ctrl, text=lab, bg=bg, font=('Arial', 8))
-            lbl.grid(row=r, column=2 * c, sticky='e', padx=(6, 2), pady=1)
+            lbl.grid(row=r + 1, column=2 * c, sticky='e', padx=(6, 2), pady=1)
             v[key] = tk.StringVar(value=val)
             ent = tk.Entry(ctrl, textvariable=v[key], width=8)
-            ent.grid(row=r, column=2 * c + 1, sticky='w', pady=1)
+            ent.grid(row=r + 1, column=2 * c + 1, sticky='w', pady=1)
+            ents[key], lbls[key] = ent, lbl
             tips.extend(ToolTip(w_, SIM_TIPS[key]) for w_ in (lbl, ent))
         from matplotlib.figure import Figure
         fig = Figure(figsize=(8.0, 5.4), dpi=100)
@@ -1267,8 +1317,15 @@ class LabSpectrumManager:
             except ValueError:
                 return None
             p['n'] = int(round(p['n']))
-            if (min(p['c'], p['dil'], p['path'], p['d'], p['t'], p['rep'], p['mw'], p['area'], p['peglmw']) <= 0
-                    or p['sg'] < 0 or p['n'] < 1 or p['acc'] < 0 or p['hi'] <= p['lo'] or p['chol'] < 0
+            p['spheres'] = mode.get() == SIM_MODES[1]
+            if (min(p['c'], p['dil'], p['path'], p['d']) <= 0 or p['sg'] < 0 or p['acc'] < 0 or p['hi'] <= p['lo']
+                    or not 0 <= p['loss'] < 100):
+                return None
+            if p['spheres']:
+                if p['nsph'] <= 1.0 or p['rho'] <= 0:
+                    return None
+                return p
+            if (min(p['t'], p['rep'], p['mw'], p['area'], p['peglmw']) <= 0 or p['n'] < 1 or p['chol'] < 0
                     or p['peg'] < 0 or p['pegmw'] < 0 or not 0 <= p['pegl'] <= 2):
                 return None
             try:
@@ -1289,6 +1346,8 @@ class LabSpectrumManager:
         def base(p, d, lamg):
             """Theoretical absorbance with k = 1 and no offset (absolute, from the lipid in the cuvette)."""
             conc = p['c'] / p['dil'] * (1 - p['loss'] / 100.0)
+            if p['spheres']:                           # c is then % w/v of solids
+                return solid_sphere_amplitude(lamg, d, p['sg'], conc, p['path'], p['nsph'], p['rho'], p['acc'])
             mx = p['mix']                              # POPC alone when cholesterol and PEG-lipid are 0
             return vesicle_amplitude(lamg, d, p['sg'], p['n'], conc, p['path'], mx['t'], mx['dn'], p['rep'],
                                      p['acc'], mx['mw'], mx['area'])
@@ -1324,15 +1383,18 @@ class LabSpectrumManager:
             fig.tight_layout()
             cv.draw()
             conc = p['c'] / p['dil'] * (1 - p['loss'] / 100.0)
+            what = (f"Solid spheres in the cuvette {conc:.3g}% w/v (n = {p['nsph']:g} at 589 nm, density {p['rho']:g} g/mL), "
+                    f"d = {p['d']:g} nm, " if p['spheres'] else
+                    f"Lipid in the cuvette {conc:.3g} mg/mL; {p['n']} lamella{'e' if p['n'] > 1 else ''}, d = {p['d']:g} nm, ")
             info.config(text=(
                 (f"DLS: Z-average {dls['DLS Z-average (nm)']} nm, PI {dls['DLS PI']}.\n" if 'DLS Z-average (nm)' in dls
                  else "")
-                + f"Lipid in the cuvette {conc:.3g} mg/mL; {p['n']} lamella{'e' if p['n'] > 1 else ''}, d = {p['d']:g} nm, "
-                f"σ = {p['sg']:g}, half-angle {p['acc']:g}°.\n"
+                + what
+                + f"σ = {p['sg']:g}, half-angle {p['acc']:g}°.\n"
                 + (f"Mixture {100 - p['chol'] - p['peg']:g}/{p['chol']:g}/{p['peg']:g} mol% POPC/cholesterol/PEG-lipid: "
                    f"mean molar mass {p['mix']['mw']:.0f}, area {p['mix']['area']:.3f} nm², bilayer {p['mix']['t']:.2f} nm, "
                    f"shell index excess {p['mix']['dn']:.3f} (PEG film {p['mix']['peg_film']:.2f} nm per leaflet).\n"
-                   if (p['chol'] or p['peg']) else "")
+                   if (not p['spheres'] and (p['chol'] or p['peg'])) else "")
                 + f"rms residual {rms:.4g}   |   amplitude factor that minimises it: k = {kb:.3g} (rms {rmsb:.4g}); "
                 f"k = 1 means that the absolute scale agrees."))
             win.config(cursor='')
@@ -1344,6 +1406,23 @@ class LabSpectrumManager:
 
         for s_ in v.values():
             s_.trace_add('write', schedule)
+
+        def on_mode(*_):
+            """Grey out the fields of the other sample type; switching also sets the usual starting values."""
+            sph = mode.get() == SIM_MODES[1]
+            for key in ves_only:
+                ents[key].config(state='disabled' if sph else 'normal')
+            for key in sph_only:
+                ents[key].config(state='normal' if sph else 'disabled')
+            lbls['c'].config(text="Solids stock (% w/v)" if sph else "Lipid stock (mg/mL)")
+            if state.get('mode') != sph:                  # a real switch, not the first call
+                if state.get('mode') is not None:
+                    v['c'].set('4' if sph else '10')
+                    v['sg'].set('0.05' if sph else sg0)
+                state['mode'] = sph
+            schedule()
+
+        mode.trace_add('write', on_mode)
 
         def fit(free_k):
             p = params()
@@ -1381,7 +1460,7 @@ class LabSpectrumManager:
             update()
 
         bf = tk.Frame(ctrl, bg=bg)
-        bf.grid(row=0, column=10, rowspan=3, padx=10)
+        bf.grid(row=1, column=10, rowspan=3, padx=10)
         b1 = tk.Button(bf, text="Fit size", command=lambda: fit(False), bg='#fff9c4', font=('Arial', 9))
         b2 = tk.Button(bf, text="Fit size + amplitude", command=lambda: fit(True), bg='#fff9c4', font=('Arial', 9))
         b3 = tk.Button(bf, text="Update", command=update, font=('Arial', 9))
@@ -1394,6 +1473,8 @@ class LabSpectrumManager:
         info.pack(side=tk.BOTTOM, fill=tk.X, padx=8, pady=(0, 4))
         cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         win._sim_vars, win._sim_fit, win._sim_update, win._sim_tips = v, fit, update, tips      # handles for the tests
+        win._sim_mode = mode
+        on_mode()
         update()
 
     def _sc_copia_equazione(self):

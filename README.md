@@ -175,7 +175,10 @@ export — see Dependencies.
   samples above: 100 nm (undiluted, 0.1 cm) fits at 80 nm with k = 1.4, 200 nm at 175 nm with k = 1.8 (DLS 177 nm), the
   3-pass 450 nm sample at ~600 nm with 7 lamellae and k = 1.0 (DLS 300-410 nm). When a DLS result is attached to the
   spectrum, the simulator starts from its Z-average as the diameter and from the square root of its PI as the width σ
-  (without one it starts from 150 nm and 0.2) and shows the DLS values above the plot.
+  (without one it starts from 150 nm and 0.2) and shows the DLS values above the plot. The *Sample type* box switches
+  to **solid spheres (latex)**: the concentration is then in % w/v of solids, with the particle index (polystyrene
+  1.592 at 589 nm, with the dispersion of polystyrene) and the density (1.055 g/mL) instead of the lipid fields; it is
+  meant for a size standard such as a 100 nm carboxyl latex (the polystyrene index formula is approximate).
   The lipid composition (mol% of cholesterol and of PEG-lipid; the rest is POPC) sets the mean molar mass, the area
   per molecule, the bilayer thickness and a film of PEG in the shell (order-of-magnitude assumptions, stated in
   `lipid_mixture()`): for a 85/10/5 POPC/cholesterol/DSPE-PEG2000 mixture k drops from 1.8 to 1.5 on the 200 nm

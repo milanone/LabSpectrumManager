@@ -100,6 +100,51 @@ class TestVesicleTheory(unittest.TestCase):
 
 
 @unittest.skipUnless(HAS_SCIPY, "scipy not installed")
+class TestSolidSphere(unittest.TestCase):
+    lam = np.array([350.0, 400.0, 500.0, 600.0, 800.0])
+
+    def test_reference_values_of_a_100_nm_latex(self):
+        """0.005% w/v, 100 nm, monodisperse, 1 cm (the values printed on the dilution sheet, n(589) = 1.596)."""
+        a = lsm.solid_sphere_amplitude(self.lam, 100.0, 0.0, 0.005, n589=1.596)
+        np.testing.assert_allclose(a, [0.2246, 0.1356, 0.0566, 0.0274, 0.0086], rtol=0.01)
+
+    def test_proportional_to_concentration_and_path(self):
+        a = lsm.solid_sphere_amplitude(self.lam, 100.0, 0.05, 0.01)
+        np.testing.assert_allclose(lsm.solid_sphere_amplitude(self.lam, 100.0, 0.05, 0.04, path_cm=0.5), 2.0 * a,
+                                   rtol=1e-9)
+
+    def test_matches_the_textbook_mie_sum_for_a_homogeneous_sphere(self):
+        from scipy.special import spherical_jn, spherical_yn
+        lam = np.array([500.0])
+        d, n589, rho, pct = 100.0, 1.592, 1.055, 0.005
+        nm = lsm._water_index(lam)[0]
+        n_p = n589 + (lsm._ps_dispersion(500.0) - lsm._ps_dispersion(589.0))
+        m_rel = n_p / nm
+        x = 2 * np.pi * nm / 500.0 * d / 2
+        s = 0.0
+        for n in range(1, int(x + 4 * x ** (1 / 3) + 2) + 1):
+            def ric(z):
+                j, y = spherical_jn(n, z), spherical_yn(n, z)
+                dj, dy = spherical_jn(n, z, derivative=True), spherical_yn(n, z, derivative=True)
+                return z * j, j + z * dj, z * (j - 1j * y), (j - 1j * y) + z * (dj - 1j * dy)
+            pm, dm, _, _ = ric(m_rel * x)
+            p, dp, xi, dxi = ric(x)
+            a = (m_rel * pm * dp - p * dm) / (m_rel * pm * dxi - xi * dm)
+            b = (pm * dp - m_rel * p * dm) / (pm * dxi - m_rel * xi * dm)
+            s += (2 * n + 1) * (abs(a) ** 2 + abs(b) ** 2)
+        c_sca = 2 / x ** 2 * s * np.pi * (d / 2) ** 2                                    # nm^2
+        volume = np.pi / 6 * d ** 3 * 1e-21
+        ref = (pct / 100 / rho / volume) * c_sca * 1e-14 / np.log(10)
+        got = lsm.solid_sphere_amplitude(lam, d, 0.0, pct, 1.0, n589, rho, acc_deg=0.0)[0]
+        self.assertAlmostEqual(got / ref, 1.0, delta=0.01)
+
+    def test_the_apparent_P_of_a_100_nm_polystyrene_sphere_is_near_four(self):
+        lam = np.arange(350.0, 801.0, 10.0)
+        P = lsm.fit_power_law(lam, lsm.solid_sphere_amplitude(lam, 100.0, 0.0, 0.01), m=0.0)[1]
+        self.assertTrue(3.7 < P < 4.1, P)
+
+
+@unittest.skipUnless(HAS_SCIPY, "scipy not installed")
 class TestAmplitude(unittest.TestCase):
     lam = np.array([500.0])
 
@@ -248,13 +293,43 @@ class TestPanelOffsetLock(unittest.TestCase):
         lam = np.arange(350.0, 801.0, 10.0)
         win = self.open_simulator(lam, lsm.vesicle_amplitude(lam, 150.0, 0.2, 1, 10.0, 1.0))
         self.assertTrue(set(win._sim_vars) <= set(lsm.SIM_TIPS))
-        self.assertEqual(len(win._sim_tips), 2 * len(win._sim_vars) + 3)          # label + entry per field, 3 buttons
+        # label + entry per field, the sample-type label and combobox, 3 buttons
+        self.assertEqual(len(win._sim_tips), 2 * len(win._sim_vars) + 2 + 3)
         tip = next(t for t in win._sim_tips if t.text == lsm.SIM_TIPS['sg'])
         tip._show()
         self.assertIsNotNone(tip._tip)
         self.assertIn("PDI", tip.text)
         tip._hide()
         self.assertIsNone(tip._tip)
+
+    @unittest.skipUnless(HAS_SCIPY, "scipy not installed")
+    def test_simulator_solid_sphere_mode_overlays_the_latex_theory(self):
+        lam = np.arange(350.0, 801.0, 10.0)
+        truth = lsm.solid_sphere_amplitude(lam, 100.0, 0.05, 0.005)             # 0.005% w/v, 1 cm, the default n and density
+        win = self.open_simulator(lam, truth)
+        v = win._sim_vars
+        win._sim_mode.set(lsm.SIM_MODES[1])
+        self.assertEqual((v['c'].get(), v['sg'].get()), ('4', '0.05'))            # usual starting values of a latex
+        v['dil'].set('800'); v['d'].set('100')                                    # 4% w/v / 800 = 0.005% w/v
+        win._sim_update()
+        text = [w.cget("text") for w in win.winfo_children() if isinstance(w, tk.Label)][-1]
+        self.assertIn("Solid spheres in the cuvette 0.005% w/v", text)
+        rms = float(text.split("rms residual")[1].split()[0])
+        self.assertLess(rms, 1e-3 * truth.max())
+        win._sim_mode.set(lsm.SIM_MODES[0])                                      # and back to the vesicles
+        self.assertEqual(v['c'].get(), '10')
+
+    @unittest.skipUnless(HAS_SCIPY, "scipy not installed")
+    def test_simulator_fit_finds_the_diameter_of_a_latex(self):
+        lam = np.arange(350.0, 801.0, 10.0)
+        truth = lsm.solid_sphere_amplitude(lam, 125.0, 0.05, 0.005)
+        win = self.open_simulator(lam, truth)
+        v = win._sim_vars
+        win._sim_mode.set(lsm.SIM_MODES[1])
+        v['dil'].set('800')
+        win._sim_fit(True)
+        self.assertAlmostEqual(float(v['d'].get()), 125.0, delta=3.0)
+        self.assertAlmostEqual(float(v['k'].get()), 1.0, delta=0.05)
 
     @unittest.skipUnless(HAS_SCIPY, "scipy not installed")
     def test_simulator_fit_recovers_size_and_amplitude(self):
