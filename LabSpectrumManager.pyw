@@ -364,6 +364,51 @@ def lipid_mixture(chol_pct=0.0, peg_pct=0.0, mw_popc=760.08, area_popc=0.65, t_p
     return {'mw': mw, 'area': area, 't': t, 'dn': dn, 'peg_film': film}
 
 
+# Keys of a Horiba SZ-100 `.nsz` (OLE2 container) that read_nsz() uses: every value is a float32 stored right after the
+# key name and a 0 byte. Sizes are stored as RADII in nm (the file's Z-average, mean, S.D. and mode are 2x the stored values).
+_NSZ_KEYS = {'Cum_fMean': 'z_radius', 'Cum_fPi': 'pi', 'CalcMean[0]': 'mean_radius', 'CalcSD[0]': 'sd_radius',
+             'CalcMode': 'mode_radius', 'MeasAngle': 'angle', 'MeasHolderTemp': 'temperature',
+             'MeasSolventVisco': 'viscosity', 'MeasSolventRef': 'solvent_index', 'MeasSampleRef': 'particle_index'}
+
+
+def read_nsz(raw):
+    """Result of a Horiba SZ-100 dynamic light scattering measurement (`.nsz`) as a dict of floats: z_average, pi,
+    mean, sd, mode (nm, intensity-weighted; mean/sd/mode of the main peak), angle (deg), temperature (deg C), viscosity
+    (mPa.s), solvent_index and particle_index (the refractive indices entered in the instrument software; the particle
+    one only serves to convert the distribution to volume or number, Z-average and PI do not use it). Keys that are
+    missing or out of range are left out. Raises ValueError if the file is not a DLS result (no Z-average found).
+    Verified against the CSV export of the same measurements for four files (Z-average, PI, mean, S.D., mode, angle,
+    temperature, viscosity); the indices are read as stored."""
+    if raw[:8] != b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1':
+        raise ValueError("not an OLE2 .nsz file (signature D0CF11E0 missing)")
+    blob = b'\0'.join(LabSpectrumManager._ole_streams(raw).values())
+    found = {}
+    for key, name in _NSZ_KEYS.items():
+        m = re.search(re.escape(key.encode()) + b'\x00(.{4})', blob, re.S)
+        if m:
+            v = struct.unpack('<f', m.group(1))[0]
+            if np.isfinite(v):
+                found[name] = float(v)
+    ranges = {'z_radius': (0.05, 5e4), 'pi': (0.0, 2.0), 'mean_radius': (0.05, 5e4), 'sd_radius': (0.0, 5e4),
+              'mode_radius': (0.05, 5e4), 'angle': (1, 180), 'temperature': (-10, 120), 'viscosity': (0.05, 100),
+              'solvent_index': (1.0, 2.0), 'particle_index': (1.0, 3.5)}
+    out = {k: v for k, v in found.items() if ranges[k][0] <= v <= ranges[k][1]}
+    if 'z_radius' not in out:
+        raise ValueError("no DLS result found in the file (Z-average missing)")
+    for k in ('z', 'mean', 'sd', 'mode'):
+        if k + '_radius' in out:
+            out[{'z': 'z_average'}.get(k, k)] = 2 * out.pop(k + '_radius')
+    return out
+
+
+# Metadata rows written by attaching a DLS result: key shown in the panel -> (read_nsz key, format)
+_DLS_INFO = (('DLS Z-average (nm)', 'z_average', '{:.1f}'), ('DLS PI', 'pi', '{:.3f}'),
+             ('DLS mean (nm)', 'mean', '{:.1f}'), ('DLS S.D. (nm)', 'sd', '{:.1f}'), ('DLS mode (nm)', 'mode', '{:.1f}'),
+             ('DLS angle (deg)', 'angle', '{:.0f}'), ('DLS temperature (C)', 'temperature', '{:.1f}'),
+             ('DLS viscosity (mPa.s)', 'viscosity', '{:.3f}'), ('DLS solvent index', 'solvent_index', '{:.3f}'),
+             ('DLS particle index', 'particle_index', '{:.2f}'))
+
+
 class LabSpectrumManager:
     def __init__(self, root):
         self.root = root
@@ -490,6 +535,7 @@ class LabSpectrumManager:
         self.menu_bar = tk.Menu(root)
         self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.file_menu.add_command(label="Open Files (.dsp, .dsw, .sp, .spc, .vspd, .csv)", command=self.carica_da_dialog)
+        self.file_menu.add_command(label="Attach DLS result (.nsz) to selected...", command=self._allega_dls)
         self.file_menu.add_separator()
         self.file_menu.add_command(label="Open Session...", command=self.apri_sessione)
         self.file_menu.add_command(label="Save Session...", command=self.salva_sessione)
@@ -1161,6 +1207,12 @@ class LabSpectrumManager:
             messagebox.showwarning("Spectrum simulator", "Il calcolo di Mie richiede scipy (pip install scipy).")
             return
         x, y = np.asarray(self._sc_x, float), np.asarray(self._sc_y, float)
+        dls = self.spectra.get(self._sc_name, {}).get('info', {})
+        try:                                   # starting size and width from the attached DLS result, if any
+            d0 = f"{float(dls['DLS Z-average (nm)']):.0f}"
+            sg0 = f"{min(max(float(dls['DLS PI']) ** 0.5, 0.05), 0.6):.2f}"
+        except (KeyError, ValueError):
+            d0, sg0 = '150', '0.2'
         lo0 = min(self._sc_vline_lo.get_xdata()[0], self._sc_vline_hi.get_xdata()[0])
         hi0 = max(self._sc_vline_lo.get_xdata()[0], self._sc_vline_hi.get_xdata()[0])
         win = tk.Toplevel(self.root)
@@ -1168,7 +1220,7 @@ class LabSpectrumManager:
         bg = '#f0f4f7'
         win.configure(bg=bg)
         fields = (("Lipid stock (mg/mL)", 'c', '10'), ("Dilution (1:x)", 'dil', '1'), ("Lipid loss (%)", 'loss', '0'),
-                  ("Path (cm)", 'path', '1'), ("Diameter (nm)", 'd', '150'), ("Width σ", 'sg', '0.2'),
+                  ("Path (cm)", 'path', '1'), ("Diameter (nm)", 'd', d0), ("Width σ", 'sg', sg0),
                   ("Lamellae", 'n', '1'), ("Half-angle (°)", 'acc', '10'), ("POPC bilayer (nm)", 't', '4.5'),
                   ("Index excess", 'dn', '0.12'), ("Repeat (nm)", 'rep', '7'), ("POPC MW", 'mw', '760.08'),
                   ("POPC area (nm²)", 'area', '0.65'), ("Amplitude k", 'k', '1'), ("Offset", 'off', '0'),
@@ -1260,7 +1312,9 @@ class LabSpectrumManager:
             cv.draw()
             conc = p['c'] / p['dil'] * (1 - p['loss'] / 100.0)
             info.config(text=(
-                f"Lipid in the cuvette {conc:.3g} mg/mL; {p['n']} lamella{'e' if p['n'] > 1 else ''}, d = {p['d']:g} nm, "
+                (f"DLS: Z-average {dls['DLS Z-average (nm)']} nm, PI {dls['DLS PI']}.\n" if 'DLS Z-average (nm)' in dls
+                 else "")
+                + f"Lipid in the cuvette {conc:.3g} mg/mL; {p['n']} lamella{'e' if p['n'] > 1 else ''}, d = {p['d']:g} nm, "
                 f"σ = {p['sg']:g}, half-angle {p['acc']:g}°.\n"
                 + (f"Mixture {100 - p['chol'] - p['peg']:g}/{p['chol']:g}/{p['peg']:g} mol% POPC/cholesterol/PEG-lipid: "
                    f"mean molar mass {p['mix']['mw']:.0f}, area {p['mix']['area']:.3f} nm², bilayer {p['mix']['t']:.2f} nm, "
@@ -4720,6 +4774,40 @@ class LabSpectrumManager:
         self._dirty = True
         self.aggiorna_vista()
 
+    # --- DLS (.nsz) attached to a spectrum as metadata ---
+    def _allega_dls(self, name=None):
+        """Ask for a Horiba SZ-100 `.nsz` file and attach its result (Z-average, PI, peak statistics, angle, temperature,
+        viscosity, refractive indices) to the spectrum `name` (default: the one selected in the list) as metadata rows.
+        The spectra and the DLS file names are not related, so the pairing is always the user's choice. A spectrum
+        without a DLS result simply has no 'DLS ...' rows."""
+        if name is None:
+            sel = self.file_listbox.curselection()
+            if len(sel) != 1:
+                messagebox.showwarning("Attach DLS", "Selezionare esattamente uno spettro dalla lista.")
+                return
+            name = self.file_listbox.get(sel[0])
+        path = filedialog.askopenfilename(title=f"DLS result for {name}", filetypes=[("Horiba SZ-100 result", "*.nsz")])
+        if path:
+            self._allega_dls_file(name, path)
+
+    def _allega_dls_file(self, name, path):
+        try:
+            with open(path, 'rb') as f:
+                res = read_nsz(f.read())
+        except Exception as e:
+            messagebox.showerror("Attach DLS", f"Impossibile leggere il risultato DLS:\n{path}\n\n{e}")
+            return False
+        info = self.spectra[name]['info']
+        for k in [k for k in info if k.startswith('DLS ')]:
+            del info[k]                                   # a new attachment replaces the previous one
+        info['DLS file'] = os.path.basename(path)
+        for label, key, fmt in _DLS_INFO:
+            if key in res:
+                info[label] = fmt.format(res[key])
+        self._dirty = True
+        self.aggiorna_vista()
+        return True
+
     # --- CONTEXT MENU LISTBOX ---
     def _listbox_tasto_destro(self, event):
         idx = self.file_listbox.nearest(event.y)
@@ -4743,6 +4831,8 @@ class LabSpectrumManager:
         menu.add_command(label="Show" if len(names) == 1 else f"Show {len(names)} spectra",
                          command=lambda: self._mostra_spettri(names))
         menu.add_separator()
+        menu.add_command(label="Attach DLS result (.nsz)...", state=tk.NORMAL if len(names) == 1 else tk.DISABLED,
+                         command=lambda: self._allega_dls(names[0]))
         menu.add_command(label="Rename...", state=tk.NORMAL if len(names) == 1 else tk.DISABLED,
                          command=lambda: self._rinomina_spettro(names[0]))
         menu.add_command(label="Move up", command=lambda: self._sposta_spettri(names, 'up'))

@@ -17,6 +17,7 @@ averaging, smoothing (boxcar or Savitzky-Golay) and multi-peak deconvolution
 | `.sp` | FTIR PerkinElmer (binary) | native parser (no external tool required) |
 | `.spc` | Fluorescence (Shimadzu RF-5301) or UV-Vis (Shimadzu UV-1900 / UVProbe) | native parsers; the container type is detected from the file signature. UV-1900 verified on one absorbance file |
 | `.vspd` | UV-Vis (Shimadzu UV-1900, LabSolutions UV-Vis) | native parser (same OLE2 container and X/Y streams as the UV-1900 `.spc`). Verified on one absorbance scan (200-600 nm, 1 nm step); the measuring mode is assumed to be absorbance, other modes are untested. If a file does not load, send the first bytes of it |
+| `.nsz` | DLS result (Horiba SZ-100) | not a spectrum: attached to a loaded spectrum as metadata (Z-average, PI, mean, S.D. and mode, angle, temperature, viscosity, refractive indices) with *File → Attach DLS result (.nsz) to selected...* or the list's right-click menu. Native OLE2 reader, checked against the instrument's CSV export of the same measurements on four files; the container's other fields are not decoded |
 | `.csv` | UV-Vis or FTIR | type auto-detected from the X-axis values |
 | `.csv` | UV-Vis (BMG plate reader) | absorbance spectra per well; detected from the header — see [BMG plate-reader CSV](#bmg-plate-reader-csv) |
 
@@ -172,7 +173,9 @@ export — see Dependencies.
   given k; *Fit size + amplitude* also solves k. The absolute scale depends on bilayer thickness x index (a factor 2-3),
   so k is best calibrated on extruded unilamellar samples and then used to count the lamellae of others. On the three
   samples above: 100 nm (undiluted, 0.1 cm) fits at 80 nm with k = 1.4, 200 nm at 175 nm with k = 1.8 (DLS 177 nm), the
-  3-pass 450 nm sample at ~600 nm with 7 lamellae and k = 1.0 (DLS 300-410 nm).
+  3-pass 450 nm sample at ~600 nm with 7 lamellae and k = 1.0 (DLS 300-410 nm). When a DLS result is attached to the
+  spectrum, the simulator starts from its Z-average as the diameter and from the square root of its PI as the width σ
+  (without one it starts from 150 nm and 0.2) and shows the DLS values above the plot.
   The lipid composition (mol% of cholesterol and of PEG-lipid; the rest is POPC) sets the mean molar mass, the area
   per molecule, the bilayer thickness and a film of PEG in the shell (order-of-magnitude assumptions, stated in
   `lipid_mixture()`): for a 85/10/5 POPC/cholesterol/DSPE-PEG2000 mixture k drops from 1.8 to 1.5 on the 200 nm
