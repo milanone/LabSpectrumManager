@@ -448,33 +448,7 @@ def read_nsz(raw):
     for k in ('z', 'mean', 'sd', 'mode'):
         if k + '_radius' in out:
             out[{'z': 'z_average'}.get(k, k)] = 2 * out.pop(k + '_radius')
-    corr = _nsz_correlogram(streams)
-    if corr is not None:
-        out['tau'], out['acf'] = corr
     return out
-
-
-def _nsz_correlogram(streams):
-    """(delay times in s, normalised autocorrelation (g2-1)/beta) of a `.nsz`, or None. Both are float32 arrays stored as
-    'Delay' and 'OriginalACF' in the same stream, each preceded by its byte length (u32) and the key name; the ACF has a few
-    trailing junk values, which are cut to the number of delays. Checked on four files (43 delays from 1e-7 s to 0.11 s)."""
-    def arr(b, key):
-        m = re.search(re.escape(key) + b'\x00', b)
-        if not m or m.start() < 4:
-            return None
-        n = struct.unpack('<I', b[m.start() - 4:m.start()])[0]
-        if n % 4 or not 16 <= n <= 4 * 4096 or m.end() + n > len(b):
-            return None
-        return np.array(struct.unpack('<%df' % (n // 4), b[m.end():m.end() + n]), float)
-    for b in streams.values():
-        tau, acf = arr(b, b'Delay'), arr(b, b'OriginalACF')
-        if tau is None or acf is None or len(acf) < len(tau):
-            continue
-        acf = acf[:len(tau)]
-        if (np.all(np.isfinite(tau)) and np.all(tau > 0) and np.all(np.diff(tau) > 0) and np.all(np.isfinite(acf))
-                and acf.max() <= 1.5 and acf.min() >= -0.5):
-            return tau, acf
-    return None
 
 
 # Metadata rows written by attaching a DLS result: key shown in the panel -> (read_nsz key, format)
@@ -485,143 +459,6 @@ _DLS_INFO = (('DLS Z-average (nm)', 'z_average', '{:.1f}'), ('DLS PI', 'pi', '{:
              ('DLS transmission before', 'transmission_before', '{:.0f}'),
              ('DLS transmission after', 'transmission_after', '{:.0f}'), ('DLS solvent index', 'solvent_index', '{:.3f}'),
              ('DLS particle index', 'particle_index', '{:.2f}'))
-
-
-# ---- DLS: size distributions from the stored correlogram ----
-_KB = 1.380649e-23
-DLS_MODELS = ("Regularised (free distribution)", "1 peak (log-normal)", "2 peaks (log-normal)")
-DLS_TIPS = {
-    'model': "Regularised: a free size distribution (non-negative, smoothed), the least assumptions but a limited "
-             "resolution. 1 or 2 peaks: the intensity distribution is one or two log-normal peaks fitted to the "
-             "correlogram (diameter of each peak, its width and its share of the scattered intensity). Two peaks are "
-             "only meaningful if the sizes differ by a factor of about 3 or more and the fit is clearly better than "
-             "with one.",
-    'wl': "Laser wavelength, nm (532 for the SZ-100; the sizes depend on it through the scattering vector).",
-    'alpha': "Smoothing strength of the regularised inversion (second-difference penalty): larger = smoother and wider "
-             "peaks, smaller = more detail and more spurious peaks. Only used by the regularised model.",
-    'gmin': "Only the points of the correlogram with g1 = sqrt(ACF) above this value are used: the tail is mostly "
-            "noise. 0.1 for the regularised model, 0.05 for the peaks.",
-}
-
-
-def dls_q2(angle_deg, n_solvent, wavelength_nm=532.0):
-    """Squared scattering vector in 1/m^2: q = 4 pi n sin(theta/2) / lambda."""
-    q = 4 * np.pi * n_solvent * np.sin(np.radians(angle_deg) / 2) / (wavelength_nm * 1e-9)
-    return q * q
-
-
-def _dls_gamma(d_nm, q2, temp_c, visc_mpas):
-    """Decay rate (1/s) of the field correlation of spheres of diameter d_nm: Gamma = D q^2, D = kT / (3 pi eta d)."""
-    return _KB * (temp_c + 273.15) / (3 * np.pi * visc_mpas * 1e-3 * np.asarray(d_nm, float) * 1e-9) * q2
-
-
-def dls_cumulants(tau, acf, q2, temp_c, visc_mpas, gmin=0.30):
-    """Z-average (nm) and polydispersity index from a quadratic fit of ln g1 (g1 = sqrt of the normalised ACF) over the
-    points with g1 > gmin: ln g1 = -G t + (mu2/2) t^2, Z from G, PI = mu2 / G^2. The Z-average agrees with the
-    instrument's within 1-2% on four files; the PI comes out lower (the instrument's fit range is not the same).
-    Returns None when there are too few points."""
-    tau, acf = np.asarray(tau, float), np.asarray(acf, float)
-    g1 = np.sqrt(np.clip(acf, 0, None))
-    sel = g1 > gmin
-    if sel.sum() < 4:
-        return None
-    ts = 1e-4
-    c = np.polyfit(tau[sel] / ts, np.log(g1[sel]), 2)
-    G, mu2 = -c[1] / ts, 2 * c[0] / ts ** 2
-    if G <= 0:
-        return None
-    return float(_KB * (temp_c + 273.15) / (3 * np.pi * visc_mpas * 1e-3 * (G / q2)) * 1e9), float(mu2 / G ** 2)
-
-
-def dls_invert(tau, acf, q2, temp_c, visc_mpas, alpha=1.0, gmin=0.1, dmin=10.0, dmax=3000.0, ngrid=100, tau_min=1e-6):
-    """Intensity-weighted size distribution by regularised non-negative least squares: g1 = sum_j p_j exp(-Gamma_j t)
-    with p >= 0 on a log grid of diameters, weighted by g1 and a second-difference smoothing penalty alpha. Returns
-    (diameters nm, p normalised to sum 1, fitted g1 at all delays). Needs scipy (nnls)."""
-    from scipy.optimize import nnls
-    tau, acf = np.asarray(tau, float), np.asarray(acf, float)
-    g1 = np.sqrt(np.clip(acf, 0, None))
-    d = np.geomspace(dmin, dmax, ngrid)
-    gam = _dls_gamma(d, q2, temp_c, visc_mpas)
-    sel = (g1 > gmin) & (tau >= tau_min)
-    K = np.exp(-np.outer(tau[sel], gam))
-    w = g1[sel]
-    L = np.diff(np.eye(ngrid), 2, axis=0)
-    p, _ = nnls(np.vstack([K * w[:, None], alpha * L]), np.concatenate([g1[sel] * w, np.zeros(ngrid - 2)]))
-    p = p / p.sum()
-    return d, p, np.exp(-np.outer(tau, gam)) @ p
-
-
-def dls_fit_peaks(tau, acf, q2, temp_c, visc_mpas, n_peaks=2, gmin=0.05, dmin=10.0, dmax=1e4, ngrid=160,
-                  tau_min=1e-6):
-    """Intensity distribution as n_peaks log-normal peaks (median diameter, width in ln d, share of the intensity),
-    fitted to g1 by least squares from several starting points (the intercept of g1 is a free parameter). Returns
-    (diameters, p, fitted g1, peaks, rms of g1, BIC) where peaks is a list of dicts {'median', 'sigma', 'fraction'} sorted
-    by size and BIC = N ln(rss/N) + k ln N is the Bayesian information criterion (a model with the lower BIC is
-    preferred; a difference below about 6 is not significant). Needs scipy (least_squares).
-    Delays shorter than tau_min (1 us) are left out: the first channels of the stored correlogram drop by about 1% in
-    one step (the first point is the normalisation), which a fit reads as a 3-5% 'peak' at 3-16 nm on every file."""
-    from scipy.optimize import least_squares
-    tau, acf = np.asarray(tau, float), np.asarray(acf, float)
-    g1 = np.sqrt(np.clip(acf, 0, None))
-    d = np.geomspace(dmin, dmax, ngrid)
-    lnd = np.log(d)
-    gam = _dls_gamma(d, q2, temp_c, visc_mpas)
-    sel = (g1 > gmin) & (tau >= tau_min)
-    K = np.exp(-np.outer(tau[sel], gam))
-    w, y = g1[sel], g1[sel]
-    n = n_peaks
-
-    def unpack(x):
-        mus, sig, logit = x[:n], x[n:2 * n], x[2 * n:3 * n]
-        a = np.exp(logit - logit.max())
-        a /= a.sum()
-        p = np.zeros(ngrid)
-        for k in range(n):
-            g = np.exp(-0.5 * ((lnd - mus[k]) / sig[k]) ** 2)
-            p += a[k] * g / g.sum()
-        return p, a, mus, sig
-
-    def resid(x):
-        return w * (x[3 * n] * (K @ unpack(x)[0]) - y)         # x[3n] = intercept of g1 (the stored ACF starts near 0.99)
-
-    cum = dls_cumulants(tau, acf, q2, temp_c, visc_mpas)
-    z0 = cum[0] if cum else 100.0
-    starts = [[np.log(z0)]] if n == 1 else [[np.log(z0 / f1), np.log(z0 * f2)] for f1, f2 in ((1.3, 3), (1.6, 6), (2, 4))]
-    lo = np.r_[[np.log(dmin) + 0.5] * n, [0.05] * n, [-8.0] * n, 0.5]
-    hi = np.r_[[np.log(dmax) - 0.5] * n, [1.2] * n, [8.0] * n, 1.5]
-    best = None
-    for mu0 in starts:
-        x0 = np.r_[mu0, [0.15] * n, [0.0] * n, 1.0]
-        res = least_squares(resid, np.clip(x0, lo + 1e-9, hi - 1e-9), bounds=(lo, hi))
-        if best is None or res.cost < best.cost:
-            best = res
-    p, a, mus, sig = unpack(best.x)
-    order = np.argsort(mus)
-    peaks = [{'median': float(np.exp(mus[k])), 'sigma': float(sig[k]), 'fraction': float(a[k])} for k in order]
-    rss, npts, k = float(np.sum(resid(best.x) ** 2)), int(sel.sum()), 3 * n
-    bic = npts * np.log(max(rss, 1e-30) / npts) + k * np.log(npts)         # lower is better; compare 1 with 2 peaks
-    return (d, p, best.x[3 * n] * (np.exp(-np.outer(tau, gam)) @ p), peaks, float(np.sqrt(rss / npts)), float(bic))
-
-
-def dls_analyse(rec, model=DLS_MODELS[0], wavelength=532.0, alpha=1.0, gmin=None):
-    """Z-average, PI and the intensity distribution of a stored correlogram `rec` ({'tau', 'acf', 'angle', 'n', 'visc',
-    'T'}) with the chosen model of DLS_MODELS. Returns a dict with z, pi (cumulants, may be None), d, p, fit, peaks (None
-    for the regularised model), mean, mode, sd of the distribution."""
-    q2 = dls_q2(rec['angle'], rec['n'], wavelength)
-    args = (rec['tau'], rec['acf'], q2, rec['T'], rec['visc'])
-    cum = dls_cumulants(*args)
-    out = {'z': cum[0] if cum else None, 'pi': cum[1] if cum else None, 'peaks': None}
-    if model == DLS_MODELS[0]:
-        out['d'], out['p'], out['fit'] = dls_invert(*args, alpha=alpha, gmin=0.1 if gmin is None else gmin)
-    else:
-        n = 1 if model == DLS_MODELS[1] else 2
-        out['d'], out['p'], out['fit'], out['peaks'], out['rms'], out['bic'] = dls_fit_peaks(
-            *args, n_peaks=n, gmin=0.05 if gmin is None else gmin)
-    d, p = out['d'], out['p']
-    mean = float(np.sum(d * p) / np.sum(p))
-    out['mean'], out['mode'] = mean, float(d[np.argmax(p)])
-    out['sd'] = float(np.sqrt(np.sum(p * (d - mean) ** 2) / np.sum(p)))
-    return out
 
 
 class LabSpectrumManager:
@@ -751,7 +588,6 @@ class LabSpectrumManager:
         self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.file_menu.add_command(label="Open Files (.dsp, .dsw, .sp, .spc, .vspd, .csv)", command=self.carica_da_dialog)
         self.file_menu.add_command(label="Attach DLS result (.nsz) to selected...", command=self._allega_dls)
-        self.file_menu.add_command(label="DLS correlogram / size distribution...", command=self._dls_finestra)
         self.file_menu.add_separator()
         self.file_menu.add_command(label="Open Session...", command=self.apri_sessione)
         self.file_menu.add_command(label="Save Session...", command=self.salva_sessione)
@@ -5063,131 +4899,9 @@ class LabSpectrumManager:
         for label, key, fmt in _DLS_INFO:
             if key in res:
                 info[label] = fmt.format(res[key])
-        self.spectra[name].pop('dls', None)               # the stored correlogram follows the attached result
-        if 'tau' in res:
-            self.spectra[name]['dls'] = {'tau': res['tau'], 'acf': res['acf'], 'angle': res.get('angle', 90.0),
-                                         'n': res.get('solvent_index', 1.333), 'visc': res.get('viscosity', 0.89),
-                                         'T': res.get('temperature', 25.0)}
         self._dirty = True
         self.aggiorna_vista()
         return True
-
-    def _dls_finestra(self, name=None):
-        """Window with the correlogram stored in the attached `.nsz` and the size distribution (by intensity) that it
-        gives: a regularised free distribution, or one or two log-normal peaks (a bimodal inversion). See dls_analyse()."""
-        if name is None:
-            sel = self.file_listbox.curselection()
-            if len(sel) != 1:
-                messagebox.showwarning("DLS correlogram", "Selezionare esattamente uno spettro dalla lista.")
-                return
-            name = self.file_listbox.get(sel[0])
-        rec = self.spectra[name].get('dls')
-        if rec is None:
-            messagebox.showwarning("DLS correlogram", "Allegare prima allo spettro un risultato DLS (.nsz) che contenga "
-                                                      "il correlogramma.")
-            return
-        try:
-            import scipy.optimize  # noqa: F401  (nnls and least_squares)
-        except ImportError:
-            messagebox.showwarning("DLS correlogram", "L'inversione richiede scipy (pip install scipy).")
-            return
-        info = self.spectra[name]['info']
-        win = tk.Toplevel(self.root)
-        win.title(f"DLS correlogram: {name}")
-        bg = '#f0f4f7'
-        win.configure(bg=bg)
-        ctrl = tk.Frame(win, bg=bg)
-        ctrl.pack(fill=tk.X, padx=8, pady=6)
-        tips, v = [], {}
-        mode = tk.StringVar(value=DLS_MODELS[0])
-        lab = tk.Label(ctrl, text="Model", bg=bg, font=('Arial', 8))
-        lab.pack(side=tk.LEFT, padx=(4, 2))
-        cmb = ttk.Combobox(ctrl, textvariable=mode, values=DLS_MODELS, state='readonly', width=30)
-        cmb.pack(side=tk.LEFT)
-        tips.extend(ToolTip(w_, DLS_TIPS['model']) for w_ in (lab, cmb))
-        for text_, key, val in (("Wavelength (nm)", 'wl', '532'), ("Smoothing α", 'alpha', '1.0'), ("g1 min", 'gmin', '0.1')):
-            lab = tk.Label(ctrl, text=text_, bg=bg, font=('Arial', 8))
-            lab.pack(side=tk.LEFT, padx=(10, 2))
-            v[key] = tk.StringVar(value=val)
-            ent = tk.Entry(ctrl, textvariable=v[key], width=6)
-            ent.pack(side=tk.LEFT)
-            tips.extend(ToolTip(w_, DLS_TIPS[key]) for w_ in (lab, ent))
-        from matplotlib.figure import Figure
-        fig = Figure(figsize=(9.0, 4.2), dpi=100)
-        ax1, ax2 = fig.add_subplot(121), fig.add_subplot(122)
-        cv = FigureCanvasTkAgg(fig, master=win)
-        out = tk.Label(win, text="", bg=bg, font=('Consolas', 8), justify=tk.LEFT, wraplength=860)
-
-        def compute(*_):
-            try:
-                wl, alpha, gmin = float(v['wl'].get()), float(v['alpha'].get()), float(v['gmin'].get())
-            except ValueError:
-                return
-            if wl <= 0 or alpha < 0 or not 0 < gmin < 1:
-                return
-            win.config(cursor='watch')
-            win.update_idletasks()
-            try:
-                r = dls_analyse(rec, mode.get(), wl, alpha, gmin)
-            except Exception as e:
-                win.config(cursor='')
-                out.config(text=f"Inversion failed: {e}")
-                return
-            ax1.clear()
-            ax2.clear()
-            tau_us = rec['tau'] * 1e6
-            ax1.semilogx(tau_us, np.sqrt(np.clip(rec['acf'], 0, None)), 'o', ms=3, label='g1 = √ACF (measured)')
-            ax1.semilogx(tau_us, r['fit'], '-', lw=1.3, label='fit')
-            ax1.set_xlabel("Delay time (µs)")
-            ax1.set_ylabel("g1")
-            ax1.legend(fontsize=8)
-            ax1.grid(True, ls=':', alpha=0.6)
-            ax2.semilogx(r['d'], r['p'] / r['p'].max(), '-', lw=1.6)
-            if r['z'] is not None:
-                ax2.axvline(r['z'], color='grey', ls=':', lw=1, label=f"Z-average {r['z']:.0f} nm")
-                ax2.legend(fontsize=8)
-            ax2.set_xlim(r['d'][0], min(r['d'][-1], 5000))
-            ax2.set_xlabel("Diameter (nm)")
-            ax2.set_ylabel("Intensity-weighted (normalised)")
-            ax2.grid(True, ls=':', alpha=0.6)
-            fig.tight_layout()
-            cv.draw()
-            lines = []
-            if 'DLS Z-average (nm)' in info:
-                lines.append(f"Instrument: Z-average {info['DLS Z-average (nm)']} nm, PI {info.get('DLS PI', '?')} "
-                             f"(its own cumulant range and CONTIN-like inversion).")
-            if r['z'] is not None:
-                lines.append(f"Here: Z-average {r['z']:.1f} nm, PI {r['pi']:.3f} (quadratic cumulant fit of ln g1 over g1 > 0.3).")
-            if r['peaks'] is None:
-                lines.append(f"Distribution: mean {r['mean']:.0f} nm, mode {r['mode']:.0f} nm, S.D. {r['sd']:.0f} nm "
-                             f"(regularised, α = {alpha:g}).")
-            else:
-                for i, pk in enumerate(r['peaks'], 1):
-                    lines.append(f"Peak {i}: median {pk['median']:.0f} nm, σ(ln d) {pk['sigma']:.2f}, "
-                                 f"{100 * pk['fraction']:.0f}% of the scattered intensity.")
-                lines.append(f"rms of g1 over the fitted points: {r['rms']:.4f}; BIC {r['bic']:.1f} (lower is better).")
-                if len(r['peaks']) == 2:
-                    r1 = dls_analyse(rec, DLS_MODELS[1], wl, alpha, gmin)
-                    verdict = ('two peaks are supported' if r['bic'] < r1['bic'] - 6 else
-                               'one peak is enough' if r['bic'] > r1['bic'] + 6 else 'not significant')
-                    lines.append(f"One peak: rms {r1['rms']:.4f}, BIC {r1['bic']:.1f}. Difference {r1['bic'] - r['bic']:+.1f}: {verdict}.")
-            out.config(text="\n".join(lines))
-            win.config(cursor='')
-
-        def on_mode(*_):
-            v['gmin'].set('0.1' if mode.get() == DLS_MODELS[0] else '0.05')
-            compute()
-
-        mode.trace_add('write', on_mode)
-        b = tk.Button(ctrl, text="Compute", command=compute, bg='#fff9c4', font=('Arial', 9))
-        b.pack(side=tk.LEFT, padx=10)
-        tb = tk.Frame(win)
-        tb.pack(side=tk.BOTTOM, fill=tk.X)
-        NavigationToolbar2Tk(cv, tb)
-        out.pack(side=tk.BOTTOM, fill=tk.X, padx=8, pady=(0, 4))
-        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        win._dls_vars, win._dls_mode, win._dls_compute, win._dls_tips = v, mode, compute, tips + [ToolTip(b, DLS_TIPS['gmin'])]
-        compute()
 
     # --- CONTEXT MENU LISTBOX ---
     def _listbox_tasto_destro(self, event):
@@ -5214,9 +4928,6 @@ class LabSpectrumManager:
         menu.add_separator()
         menu.add_command(label="Attach DLS result (.nsz)...", state=tk.NORMAL if len(names) == 1 else tk.DISABLED,
                          command=lambda: self._allega_dls(names[0]))
-        menu.add_command(label="DLS correlogram / size distribution...",
-                         state=tk.NORMAL if len(names) == 1 and 'dls' in self.spectra[names[0]] else tk.DISABLED,
-                         command=lambda: self._dls_finestra(names[0]))
         menu.add_command(label="Rename...", state=tk.NORMAL if len(names) == 1 else tk.DISABLED,
                          command=lambda: self._rinomina_spettro(names[0]))
         menu.add_command(label="Move up", command=lambda: self._sposta_spettri(names, 'up'))
