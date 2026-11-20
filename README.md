@@ -178,7 +178,13 @@ export — see Dependencies.
   (without one it starts from 150 nm and 0.2) and shows the DLS values above the plot. The *Sample type* box switches
   to **solid spheres (latex)**: the concentration is then in % w/v of solids, with the particle index (polystyrene
   1.592 at 589 nm, with the dispersion of polystyrene) and the density (1.055 g/mL) instead of the lipid fields; it is
-  meant for a size standard such as a 100 nm carboxyl latex (the polystyrene index formula is approximate).
+  meant for a size standard such as a 100 nm carboxyl latex (the polystyrene index dispersion is approximate).
+  Checked on a certified carboxyl latex lot (TEM 130 nm, CV 10.4 %, 4.2 % w/v; sold as "0.1 µm"): the absolute spectrum
+  predicted from the certificate with no free parameter is within 0-8 % at 1:200-1:400 (k = 1.00 and 1.08, shape within
+  2 %), the measured exponent P (3.35-3.53) agrees with the theory at 130 nm, and DLS (Z-average as the diameter) predicts
+  the UV amplitude within 6-17 % and its shape within 2-5 %. DLS Z-average is 6-27 % above the TEM diameter at 90°
+  (135 nm at 173°), and the 100 nm liposomes give 80 nm from the UV against 126 nm from DLS (agreement at 200 nm: 174 against
+  177 nm). Details, tables, figures and practical recommendations: [`report/size_from_turbidity_report.md`](report/size_from_turbidity_report.md).
   The lipid composition (mol% of cholesterol and of PEG-lipid; the rest is POPC) sets the mean molar mass, the area
   per molecule, the bilayer thickness and a film of PEG in the shell (order-of-magnitude assumptions, stated in
   `lipid_mixture()`): for a 85/10/5 POPC/cholesterol/DSPE-PEG2000 mixture k drops from 1.8 to 1.5 on the 200 nm
@@ -212,6 +218,9 @@ export — see Dependencies.
 - `test_sp_reader.py` — test for the native `.sp` parser (FTIR PerkinElmer)
 - `tests/test_scatter_mie.py` — offset-free power-law fit and the vesicle Mie theory (Rayleigh limit, textbook
   solid-sphere check, panel and theory window)
+- `report/size_from_turbidity_report.md` — report on size from UV-Vis turbidity checked against DLS and a latex standard
+  (liposomes and latex, tables, figures in `report/figures/`); `report/make_figures.py` rebuilds the figures and prints the
+  numbers from the example data (not in the repository)
 - `tests/test_bmg_reader.py` — unit tests for the BMG plate-reader CSV reader (synthetic files;
   run with `python -m unittest discover -s tests -v`)
 
