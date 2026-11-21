@@ -159,11 +159,11 @@ export — see Dependencies.
   pure power law by plain least squares (the right model for non-absorbing particles such as liposomes). The
   exponent P that Mie theory predicts for unilamellar vesicles is steep up to about 130 nm and flat above it
   (figure 5 of the [report](report/size_from_turbidity_report.md)), so above that size P alone does not give the
-  size: the Spectrum simulator (a separate tool) fits it from the whole spectrum. Needs `scipy`. Checked on three POPC–cholesterol–PEG
+  size: the Spectrum simulator fits it from the whole spectrum. Needs `scipy`. Checked on three POPC–cholesterol–PEG
   samples against DLS (agreement at 177 nm; a 126 nm DLS sample gave ~80 nm from the spectrum); the model is
   unilamellar and its shell parameters are fixed assumptions, editable in the simulator.
-- **Spectrum simulator** — a tool of its own (button in the tool list), independent of Scattering Correction and of its
-  parameter P: it works on the selected UV-Vis spectrum, with its own wavelength range. It overlays on the measured spectrum the theoretical one, in absolute scale and with no free
+- **Spectrum simulator** (button in the tool list) — works on the selected UV-Vis spectrum, with its own wavelength
+  range. It overlays on the measured spectrum the theoretical one, in absolute scale and with no free
   amplitude: it is computed from the lipid concentration (stock, dilution, loss, cuvette path), the diameter and width
   of the population, the number of lamellae, the shell (bilayer thickness, index, repeat distance, POPC molar mass and
   area per lipid) and the collection half-angle. The residual is drawn below, with the rms and the amplitude factor k
