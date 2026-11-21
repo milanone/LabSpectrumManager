@@ -1,6 +1,6 @@
 # Particle size from UV-Vis turbidity, checked against DLS and a latex standard
 
-Report on the *Spectrum simulator*, the *P vs size* curve and the DLS tools of LabSpectrumManager, tested on
+Report on the *Spectrum simulator*, and the theoretical P(d) curve of LabSpectrumManager, compared with DLS, tested on
 a 100 nm carboxyl latex standard (certified lot) and on POPC-cholesterol-PEG liposomes, with UV-Vis (`.dsp` spectra,
 1 cm and 0.1 cm cuvettes) and DLS (Horiba SZ-100, 532 nm). Measurements of 18-19 November 2026. All numbers
 below are printed by [`make_figures.py`](make_figures.py) from the example data (not in the repository, it holds
@@ -33,7 +33,7 @@ with an approximate Cauchy dispersion. Vesicles: coated sphere (water core), bil
 distance 7 nm with the index averaged over the water gaps. *k* = measured / predicted amplitude (1 = the
 absolute scale agrees).
 
-**DLS.** Cumulant Z-average and PI from the stored correlogram (43 delays), regularised NNLS inversion and one
+**DLS** (analysed in DLSManager, not in LabSpectrumManager). Cumulant Z-average and PI from the stored correlogram (43 delays), regularised NNLS inversion and one
 or two log-normal peaks (BIC), `q = 4π n sin(θ/2) / λ` with λ = 532 nm; checked against the instrument's own
 Z-average (within 1-2 %). Count rates are divided by the neutral-density filter transmission; the self-attenuation
 of the 1 cm (laser) x 0.4 cm (towards the 90° detector) cell is corrected with the measured transmission.
@@ -186,9 +186,8 @@ they differ, the difference carries information (a tail, a multilamellar fractio
    filter, run three repeats, and when the Z-average changes with dilution or angle look at the PI and the
    count rate; prefer 173° for dust-sensitive samples when the instrument allows it. Do not use the two-peak
    decomposition to predict a spectrum.
-5. **Workflow in the program:** attach the `.nsz` to the spectrum (File > Attach DLS result), open the simulator (it
-   starts from the Z-average and √PI), set the concentration, cuvette and (for latex) the sample type, press
-   *Fit size + amplitude*; read k: close to 1 means the concentration and the model are right, a different
+5. **Workflow in the program:** select the spectrum, open the Spectrum Simulator, set the concentration, cuvette and
+   (for latex) the sample type, press *Fit size + amplitude* (the result does not depend on the starting diameter); read k: close to 1 means the concentration and the model are right, a different
    k with a size close to the DLS one points to the concentration or to the shell (lamellae).
 6. **Expected accuracy** (this study): standard of known composition, concentration and index: size within about 10 %
    and amplitude within about 10 % at the right dilution; unilamellar 200 nm liposomes: size within 2 % of DLS but
@@ -228,4 +227,6 @@ they differ, the difference carries information (a tail, a multilamellar fractio
 
 `py report/make_figures.py` from the repository root (needs the example data folders `spettri di esempio/20251118
 Lipo varie size`, `20261118 lipo vuoti varie size DLS`, `20261119 lattice 100 nm`, `20261119 DLS lattice e
-liposomi` and `scipy`; PlotStyleKit is used for the style if found next to the project).
+liposomi` and `scipy`; PlotStyleKit is used for the style if found next to the project). The DLS part of the script used
+the `.nsz` reader and the correlogram analysis of LabSpectrumManager, which were moved out of it on 2026-11-21: that
+part no longer runs here and needs the reader of DLSManager. The figures in `figures/` are the ones of the report.

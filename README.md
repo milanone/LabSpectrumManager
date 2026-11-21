@@ -17,7 +17,6 @@ averaging, smoothing (boxcar or Savitzky-Golay) and multi-peak deconvolution
 | `.sp` | FTIR PerkinElmer (binary) | native parser (no external tool required) |
 | `.spc` | Fluorescence (Shimadzu RF-5301) or UV-Vis (Shimadzu UV-1900 / UVProbe) | native parsers; the container type is detected from the file signature. UV-1900 verified on one absorbance file |
 | `.vspd` | UV-Vis (Shimadzu UV-1900, LabSolutions UV-Vis) | native parser (same OLE2 container and X/Y streams as the UV-1900 `.spc`). Verified on one absorbance scan (200-600 nm, 1 nm step); the measuring mode is assumed to be absorbance, other modes are untested. If a file does not load, send the first bytes of it |
-| `.nsz` | DLS result (Horiba SZ-100) | not a spectrum: attached to a loaded spectrum as metadata (Z-average, PI, mean, S.D. and mode, angle, temperature, viscosity, transmitted laser intensity before and after the measurement, refractive indices) with *File → Attach DLS result (.nsz) to selected...* or the list's right-click menu. Native OLE2 reader, checked against the instrument's CSV export of the same measurements on four files; the correlogram is not read: its analysis (cumulants, size distribution, volume and number weighting) is done in [DLSManager](https://github.com/milanone/DLSManager), which has a window for the `.nsz` files of its own. The container's other fields are not decoded |
 | `.csv` | UV-Vis or FTIR | type auto-detected from the X-axis values |
 | `.csv` | UV-Vis (BMG plate reader) | absorbance spectra per well; detected from the header — see [BMG plate-reader CSV](#bmg-plate-reader-csv) |
 
@@ -172,10 +171,8 @@ export — see Dependencies.
   given k; *Fit size + amplitude* also solves k. The absolute scale depends on bilayer thickness x index (a factor 2-3),
   so k is best calibrated on extruded unilamellar samples and then used to count the lamellae of others. On the three
   samples above: 100 nm (undiluted, 0.1 cm) fits at 80 nm with k = 1.4, 200 nm at 175 nm with k = 1.8 (DLS 177 nm), the
-  3-pass 450 nm sample at ~600 nm with 7 lamellae and k = 1.0 (DLS 300-410 nm). When a DLS result is attached to the
-  spectrum, the simulator starts from its Z-average as the diameter and from the square root of its PI as the width σ
-  (without one it starts from 150 nm and 0.2) and shows the DLS values above the plot. The *Sample type* box switches
-  to **solid spheres (latex)**: the concentration is then in % w/v of solids, with the particle index (polystyrene
+  3-pass 450 nm sample at ~600 nm with 7 lamellae and k = 1.0 (DLS 300-410 nm).
+  The *Sample type* box switches to **solid spheres (latex)**: the concentration is then in % w/v of solids, with the particle index (polystyrene
   1.592 at 589 nm, with the dispersion of polystyrene) and the density (1.055 g/mL) instead of the lipid fields; it is
   meant for a size standard such as a 100 nm carboxyl latex (the polystyrene index dispersion is approximate).
   Checked on a certified carboxyl latex lot (TEM 130 nm, CV 10.4 %, 4.2 % w/v; sold as "0.1 µm"): the absolute spectrum
