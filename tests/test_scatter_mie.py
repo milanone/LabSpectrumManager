@@ -236,14 +236,58 @@ class TestPanelOffsetLock(unittest.TestCase):
         self.app._sc_OFF_lock.get() and self.app._linked_set(self.app._sc_OFF, 0.0)   # what the checkbox command does
         self.assertEqual(self.app._sc_OFF['value'].get(), 0.0)
 
+class TestSimulator(unittest.TestCase):
+    """The spectrum simulator is a tool of its own: it works on the selected spectrum, with no scattering panel open."""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.root = lsm.TkinterDnD.Tk() if lsm.HAS_DND else tk.Tk()
+        except tk.TclError as e:
+            raise unittest.SkipTest("Tk not available: %s" % e)
+        cls.root.withdraw()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.root.destroy()
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        with mock.patch.object(lsm.messagebox, "showwarning"):
+            self.app = lsm.LabSpectrumManager(self.root)
+
+    def load(self, x, y):
+        """Load (x, y) as the only spectrum of the app, so that it is the selected one."""
+        path = os.path.join(self.tmp.name, "sim.csv")
+        with open(path, "w", newline="") as f:
+            f.write("Wavelength [nm],Sample X1\n")
+            for w, v in zip(x, y):
+                f.write(f"{w},{v:.9f}\n")
+        self.app.processa_file(path)
+        self.app.aggiorna_vista()
+
     def open_simulator(self, x, y):
-        """Open the simulator on the spectrum (x, y) as the panel holds it; returns the window and its field variables."""
-        self.app._sc_x, self.app._sc_y = np.asarray(x, float), np.asarray(y, float)
+        """Open the simulator on the spectrum (x, y); returns the window."""
+        self.load(x, y)
         before = set(self.root.winfo_children())
-        self.app._sc_simulatore()
+        self.app.open_simulator()
         win = [w for w in self.root.winfo_children() if w not in before and isinstance(w, tk.Toplevel)][0]
         self.addCleanup(win.destroy)
         return win
+
+    def test_it_is_independent_of_the_scattering_panel(self):
+        lam = np.arange(350.0, 801.0, 5.0)
+        win = self.open_simulator(lam, 0.07 * (lam / 1000.0) ** -2.6)
+        self.assertIsNone(self.app._sc_name)                           # no scattering panel was opened
+        self.assertEqual((win._sim_vars['lo'].get(), win._sim_vars['hi'].get()), ('350', '800'))
+
+    def test_no_selection_or_ftir_is_refused(self):
+        with mock.patch.object(lsm.messagebox, "showwarning") as warn:
+            before = set(self.root.winfo_children())
+            self.app.open_simulator()                                  # nothing loaded
+        warn.assert_called_once()
+        self.assertEqual(set(self.root.winfo_children()), before)
 
     @unittest.skipUnless(HAS_SCIPY, "scipy not installed")
     def test_simulator_overlays_theory_and_reports_the_agreement(self):

@@ -155,7 +155,7 @@ class ToolTip:
             self._tip = None
 
 
-# Help texts of the simulator fields (key -> text); the keys are those of the field table in _sc_simulatore()
+# Help texts of the simulator fields (key -> text); the keys are those of the field table in open_simulator()
 SIM_MODES = ("Lipid vesicles", "Solid spheres (latex)")
 SIM_TIPS = {
     'mode': "Lipid vesicles: a thin lipid shell in water (the concentration is in mg/mL of lipid). Solid spheres: "
@@ -717,6 +717,7 @@ class LabSpectrumManager:
             ("Trim",                  self.apri_trim,                  '#cfd8dc'),
             ("Derivative",            self.apri_derivata,              '#d1c4e9'),
             ("Shift / Scale",         self.apri_shift_scale,           '#f8bbd0'),
+            ("Spectrum Simulator",    self.open_simulator,             '#e1f5fe'),
         ]
         for i, (testo, comando, colore) in enumerate(operazioni):
             tk.Button(btn_frame_ops, text=testo, command=comando, bg=colore,
@@ -852,8 +853,6 @@ class LabSpectrumManager:
         self._sc_range_label.pack(pady=(6, 0))
         tk.Button(self.f_scattering, text="Auto (fit window)",
                   command=self._sc_auto, bg='#fff9c4', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(2, 0))
-        tk.Button(self.f_scattering, text="Spectrum simulator...",
-                  command=self._sc_simulatore, bg='#e1f5fe', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(2, 0))
 
         # Pulsanti Apply / Cancel
         btn_sc = tk.Frame(self.f_scattering, bg=bg)
@@ -1153,7 +1152,7 @@ class LabSpectrumManager:
                  f"P {'fixed' if lock_P else 'optimised'}, slope {'fixed' if lock_M else 'optimised'}")
 
     # --- SCATTERING: spectrum simulator (theory overlaid on the measurement, in absolute scale) ---
-    def _sc_simulatore(self):
+    def open_simulator(self):
         """Window that overlays the theoretical spectrum of a suspension of n-lamellar vesicles (Mie theory,
         vesicle_amplitude) on the measured one, in absolute scale: it is computed from the lipid concentration, the
         dilution, the cuvette path, the size and width of the population, the number of lamellae, the shell and the
@@ -1161,25 +1160,33 @@ class LabSpectrumManager:
         agreement is summed up (rms, best amplitude factor). Every field updates the plot; 'Fit size' finds the diameter
         with the least rms at the given amplitude factor k, 'Fit size + amplitude' also solves k (k near 1 = the absolute
         scale agrees; k near n_true/n = the lamellae or the lipid differ from the assumed ones). The absolute scale
-        depends on bilayer thickness x index (a factor 2-3): the shape is the robust part."""
-        if self._sc_x is None:
+        depends on bilayer thickness x index (a factor 2-3): the shape is the robust part.
+        It is a tool of its own, independent of the scattering-correction panel: it works on the spectrum selected in
+        the list and has its own wavelength range."""
+        sel = self._selezione_effettiva()
+        if len(sel) != 1:
+            messagebox.showwarning("Spectrum simulator", "Select exactly one spectrum in the list.")
+            return
+        name = self.file_listbox.get(sel[0])
+        if self.spectra[name]['info']['Type'] == 'FTIR':
+            messagebox.showwarning("Spectrum simulator", "The simulator applies to UV-Vis spectra, not to FTIR.")
             return
         try:
             import scipy.special  # noqa: F401  (needed by the Mie calculation)
         except ImportError:
-            messagebox.showwarning("Spectrum simulator", "Il calcolo di Mie richiede scipy (pip install scipy).")
+            messagebox.showwarning("Spectrum simulator", "The Mie calculation needs scipy (pip install scipy).")
             return
-        x, y = np.asarray(self._sc_x, float), np.asarray(self._sc_y, float)
-        dls = self.spectra.get(self._sc_name, {}).get('info', {})
+        x = self.spectra[name]['df'].index.to_numpy(dtype=float)
+        y = self.spectra[name]['df'][name].to_numpy(dtype=float)
+        dls = self.spectra[name].get('info', {})
         try:                                   # starting size and width from the attached DLS result, if any
             d0 = f"{float(dls['DLS Z-average (nm)']):.0f}"
             sg0 = f"{min(max(float(dls['DLS PI']) ** 0.5, 0.05), 0.6):.2f}"
         except (KeyError, ValueError):
             d0, sg0 = '150', '0.2'
-        lo0 = min(self._sc_vline_lo.get_xdata()[0], self._sc_vline_hi.get_xdata()[0])
-        hi0 = max(self._sc_vline_lo.get_xdata()[0], self._sc_vline_hi.get_xdata()[0])
+        lo0, hi0 = float(x.min()), float(x.max())
         win = tk.Toplevel(self.root)
-        win.title("Spectrum simulator")
+        win.title(f"Spectrum simulator - {name}")
         bg = '#f0f4f7'
         win.configure(bg=bg)
         fields = (("Lipid stock (mg/mL)", 'c', '10'), ("Dilution (1:x)", 'dil', '1'), ("Loss (%)", 'loss', '0'),

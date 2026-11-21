@@ -180,18 +180,15 @@ class TestAttach(unittest.TestCase):
             import scipy.special  # noqa: F401
         except ImportError:
             self.skipTest("scipy not installed")
-        self.app.apri_correzione_scattering()
         before = set(self.root.winfo_children())
-        self.app._sc_simulatore()
+        self.app.open_simulator()
         win = [w for w in self.root.winfo_children() if w not in before and isinstance(w, tk.Toplevel)][0]
         self.addCleanup(win.destroy)
         self.assertEqual((win._sim_vars['d'].get(), win._sim_vars['sg'].get()), ('150', '0.2'))      # no DLS: defaults
         win.destroy()
-        self.app._sc_annulla()
         self.app._allega_dls_file(self.name, self.nsz)
-        self.app.apri_correzione_scattering()
         before = set(self.root.winfo_children())
-        self.app._sc_simulatore()
+        self.app.open_simulator()
         win = [w for w in self.root.winfo_children() if w not in before and isinstance(w, tk.Toplevel)][0]
         self.addCleanup(win.destroy)
         self.assertEqual(win._sim_vars['d'].get(), '126')                                            # Z-average
