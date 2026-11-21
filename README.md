@@ -157,14 +157,12 @@ export — see Dependencies.
   button (form and parameters, ready for a report); the corrected spectrum keeps the parameters and
   the equation (`Scatter equation`, full precision) in its metadata. Theory and operating procedure in
   [`scattering_correction_theory.md`](scattering_correction_theory.md). *fix offset = 0* makes **Auto** fit the
-  pure power law by plain least squares (the right model for non-absorbing particles such as liposomes), and
-  *P vs size (theory)...* shows the exponent P that Mie theory predicts for unilamellar vesicles of each
-  diameter (thin lipid shell, log-normal population, instrument collection half-angle, default 10°) over the
-  current fit window, with the P in the panel as a line: the diameters where they meet are the sizes compatible
-  with the spectrum. The curve is steep up to about 130 nm and flat above it, so there P does not give the size.
-  Needs `scipy`. Checked on three POPC–cholesterol–PEG samples against DLS (agreement at 177 nm; a 126 nm DLS
-  sample gave ~80 nm from the spectrum); the model is unilamellar and its shell parameters are fixed
-  assumptions, editable in the window.
+  pure power law by plain least squares (the right model for non-absorbing particles such as liposomes). The
+  exponent P that Mie theory predicts for unilamellar vesicles is steep up to about 130 nm and flat above it
+  (figure 5 of the [report](report/size_from_turbidity_report.md)), so above that size P alone does not give the
+  size: the simulator below fits it from the whole spectrum. Needs `scipy`. Checked on three POPC–cholesterol–PEG
+  samples against DLS (agreement at 177 nm; a 126 nm DLS sample gave ~80 nm from the spectrum); the model is
+  unilamellar and its shell parameters are fixed assumptions, editable in the simulator.
   *Spectrum simulator...* overlays on the measured spectrum the theoretical one, in absolute scale and with no free
   amplitude: it is computed from the lipid concentration (stock, dilution, loss, cuvette path), the diameter and width
   of the population, the number of lamellae, the shell (bilayer thickness, index, repeat distance, POPC molar mass and
@@ -217,7 +215,7 @@ export — see Dependencies.
   (`scattering.pyw`, `spc_plotter.pyw`) kept as historical reference
 - `test_sp_reader.py` — test for the native `.sp` parser (FTIR PerkinElmer)
 - `tests/test_scatter_mie.py` — offset-free power-law fit and the vesicle Mie theory (Rayleigh limit, textbook
-  solid-sphere check, panel and theory window)
+  solid-sphere check, panel and simulator)
 - `report/size_from_turbidity_report.md` — report on size from UV-Vis turbidity checked against DLS and a latex standard
   (liposomes and latex, tables, figures in `report/figures/`); `report/make_figures.py` rebuilds the figures and prints the
   numbers from the example data (not in the repository)

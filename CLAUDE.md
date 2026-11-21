@@ -91,8 +91,8 @@ Loaded spectra are stored in `self.spectra` (dict):
   returns early), and by `vesicle_P_curve()`. Mie for a coated sphere (Bohren-Huffman, core = water): `_mie_coefs()`,
   `vesicle_turbidity()` (total scattering minus the light inside the collection half-angle `acc_deg`, which still reaches
   the detector), `vesicle_population()` (log-normal average), `vesicle_P_curve()`; `scipy.special` is imported only inside
-  `_mie_coefs()`. `_sc_curva_teorica()` opens the "P vs size (theory)" window (P(d) for sigma 0.2/0.3, defaults shell 4.5 nm,
-  dn 0.12, half-angle 10 deg, all editable) with the panel's P as a line. Origin of the defaults: three POPC-cholesterol-PEG
+  `_mie_coefs()`. The former "P vs size (theory)" window (`_sc_curva_teorica`) was removed because the simulator covers it;
+  `vesicle_P_curve()` stays as a pure function used by the tests and by `report/make_figures.py` (figure 5). Origin of the defaults: three POPC-cholesterol-PEG
   spectra (UV-1900) with DLS (Horiba): half-angle ~10 deg fits all three; shell thickness and dn matter little for the
   shape but set the absolute amplitude by a factor ~2-3; the 3-pass 450 nm sample looked multilamellar (~7 lamellae, from the
   amplitude at 10 mg/mL). Not verified: other instruments (the half-angle is instrument-specific), other lipids, vesicles

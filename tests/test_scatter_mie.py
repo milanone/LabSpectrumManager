@@ -236,19 +236,6 @@ class TestPanelOffsetLock(unittest.TestCase):
         self.app._sc_OFF_lock.get() and self.app._linked_set(self.app._sc_OFF, 0.0)   # what the checkbox command does
         self.assertEqual(self.app._sc_OFF['value'].get(), 0.0)
 
-    @unittest.skipUnless(HAS_SCIPY, "scipy not installed")
-    def test_theory_window_opens_and_reports_a_crossing(self):
-        self.app._sc_OFF_lock.set(True)
-        self.app._sc_auto()
-        before = set(self.root.winfo_children())
-        self.app._sc_curva_teorica()
-        win = [w for w in self.root.winfo_children() if w not in before and isinstance(w, tk.Toplevel)][0]
-        self.addCleanup(win.destroy)
-        labels = [w for w in win.winfo_children() if isinstance(w, tk.Label) and "σ" in str(w.cget("text"))]
-        self.assertTrue(labels)
-        self.assertIn("meets the curve", labels[0].cget("text"))
-
-
     def open_simulator(self, x, y):
         """Open the simulator on the spectrum (x, y) as the panel holds it; returns the window and its field variables."""
         self.app._sc_x, self.app._sc_y = np.asarray(x, float), np.asarray(y, float)

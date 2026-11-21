@@ -852,8 +852,6 @@ class LabSpectrumManager:
         self._sc_range_label.pack(pady=(6, 0))
         tk.Button(self.f_scattering, text="Auto (fit window)",
                   command=self._sc_auto, bg='#fff9c4', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(2, 0))
-        tk.Button(self.f_scattering, text="P vs size (theory)...",
-                  command=self._sc_curva_teorica, bg='#e1f5fe', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(2, 0))
         tk.Button(self.f_scattering, text="Spectrum simulator...",
                   command=self._sc_simulatore, bg='#e1f5fe', font=('Arial', 9)).pack(fill=tk.X, padx=10, pady=(2, 0))
 
@@ -1153,93 +1151,6 @@ class LabSpectrumManager:
         self._sc_fit_label.config(
             text=f"Auto fit {x_lo:.1f}–{x_hi:.1f} nm, {len(x_ref)} points, rms residual {rmse:.3g}; "
                  f"P {'fixed' if lock_P else 'optimised'}, slope {'fixed' if lock_M else 'optimised'}")
-
-    # --- SCATTERING: theoretical P(d) curve of liposomes (Mie theory), compared with the current P ---
-    def _sc_curva_teorica(self):
-        """Window with the exponent P that a pure power law (no offset, no slope) gives on the theoretical spectrum of
-        unilamellar vesicles of each diameter, over the current fit window, with the P in the panel as a line: the
-        diameters where the curve meets the line are the sizes compatible with the measurement. Where the curve is
-        flat (about 130-250 nm) P does not determine the size."""
-        if self._sc_x is None or self._sc_vline_lo is None:
-            return
-        try:
-            import scipy.special  # noqa: F401  (needed by the Mie calculation)
-        except ImportError:
-            messagebox.showwarning("P vs size", "Il calcolo di Mie richiede scipy (pip install scipy).")
-            return
-        x_lo = self._sc_vline_lo.get_xdata()[0]
-        x_hi = self._sc_vline_hi.get_xdata()[0]
-        x_lo, x_hi = min(x_lo, x_hi), max(x_lo, x_hi)
-        lam = self._sc_x[(self._sc_x >= x_lo) & (self._sc_x <= x_hi)]
-        if len(lam) < 5 or lam.min() < 200 or lam.max() > 1500:
-            messagebox.showwarning("P vs size", "La finestra di fit deve contenere almeno 5 punti tra 200 e 1500 nm.")
-            return
-        lam = lam[::max(1, len(lam) // 46)]          # at most ~46 wavelengths: the curve is smooth and Mie is slow
-        P_now = float(self._sc_P['value'].get())
-
-        win = tk.Toplevel(self.root)
-        win.title("P vs size (theory)")
-        bg = '#f0f4f7'
-        win.configure(bg=bg)
-        ctrl = tk.Frame(win, bg=bg)
-        ctrl.pack(fill=tk.X, padx=8, pady=6)
-        v = {}
-        tips = []
-        for lab, key, val in (("Collection half-angle (°)", 'acc', '10'), ("Shell thickness (nm)", 't', '4.5'),
-                              ("Shell index excess", 'dn', '0.12'), ("Width σ (log-normal)", 'sg', '0.2, 0.3')):
-            lbl = tk.Label(ctrl, text=lab, bg=bg, font=('Arial', 8))
-            lbl.pack(side=tk.LEFT, padx=(6, 2))
-            v[key] = tk.StringVar(value=val)
-            ent = tk.Entry(ctrl, textvariable=v[key], width=8 if key != 'sg' else 10)
-            ent.pack(side=tk.LEFT)
-            tips.extend(ToolTip(w_, SIM_TIPS[key] + (" Several values separated by commas draw one curve each."
-                                                    if key == 'sg' else "")) for w_ in (lbl, ent))
-        win._tips = tips
-        info = tk.Label(win, text="", bg=bg, font=('Consolas', 8), justify=tk.LEFT, wraplength=620)
-        from matplotlib.figure import Figure
-        fig = Figure(figsize=(6.4, 4.2), dpi=100)
-        ax = fig.add_subplot(111)
-        cv = FigureCanvasTkAgg(fig, master=win)
-
-        def calcola():
-            try:
-                acc, t, dn = float(v['acc'].get()), float(v['t'].get()), float(v['dn'].get())
-                sgs = [float(s) for s in v['sg'].get().replace(';', ',').split(',') if s.strip()]
-            except ValueError:
-                messagebox.showwarning("P vs size", "Valori non numerici.", parent=win)
-                return
-            if not sgs or t <= 0 or acc < 0:
-                return
-            win.config(cursor='watch')
-            win.update_idletasks()
-            d = np.array([40, 50, 60, 70, 80, 90, 100, 115, 130, 150, 175, 200, 225, 250, 300, 350, 400], float)
-            ax.clear()
-            lines = []
-            for sg in sgs:
-                Pc = vesicle_P_curve(d, lam, sg, t, dn, acc)
-                ax.plot(d, Pc, 'o-', ms=3, label=f'σ = {sg:g}')
-                cross = []
-                for i in range(len(d) - 1):
-                    a, b = Pc[i] - P_now, Pc[i + 1] - P_now
-                    if a == 0 or a * b < 0:
-                        cross.append(d[i] + (d[i + 1] - d[i]) * (0 if a == 0 else a / (a - b)))
-                lines.append(f"σ {sg:g}: " + ("P = %.2f meets the curve at d = %s nm" % (
-                    P_now, ", ".join(f"{c:.0f}" for c in cross)) if cross else "P outside the curve"))
-            ax.axhline(P_now, color='red', ls='--', lw=1, label=f'P in the panel = {P_now:.2f}')
-            ax.set_xlabel("Vesicle diameter (nm)")
-            ax.set_ylabel("P (pure power law, offset = 0)")
-            ax.set_title(f"{lam.min():.0f}–{lam.max():.0f} nm, unilamellar, collection half-angle {acc:g}°", fontsize=9)
-            ax.grid(True, ls=':', alpha=0.6)
-            ax.legend(fontsize=8)
-            fig.tight_layout()
-            cv.draw()
-            info.config(text="\n".join(lines))
-            win.config(cursor='')
-
-        tk.Button(ctrl, text="Compute", command=calcola, bg='#fff9c4', font=('Arial', 9)).pack(side=tk.LEFT, padx=8)
-        cv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        info.pack(fill=tk.X, padx=8, pady=(0, 6))
-        calcola()
 
     # --- SCATTERING: spectrum simulator (theory overlaid on the measurement, in absolute scale) ---
     def _sc_simulatore(self):
