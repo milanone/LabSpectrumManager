@@ -14,7 +14,7 @@ real samples); the figures are produced by the same script.
 | Does the exponent P of the spectrum agree with the certified size? | **Yes**, 3.35-3.53 measured against 3.5 predicted at 130 nm. At the DLS diameters (150-165 nm) the model would give 3.1-3.3 | Section 3.1, Fig. 5 |
 | Do UV-Vis and DLS agree on the latex? | **Yes, within 6-17 % in amplitude and 2-5 % in shape** when the DLS Z-average is used as the diameter. DLS is 6-27 % larger than the certified TEM diameter (90°); at 173° it is within 4 % | Section 3.2, Fig. 2 |
 | Is the dilution series consistent? | The three independent measures of the L2/L1 ratio (UV, DLS extinction, DLS count rate) agree with each other (1.5-1.7) and all sit below the nominal 2: the concentration of the most dilute sample is known to about ±25 % | Section 3.3, Fig. 2c |
-| Does the UV simulator give the size of the liposomes? | **At 200 nm, yes** (174 nm against 177 nm DLS). At 100 nm it gives 80 nm against 126 nm DLS, and for the 3-pass 450 nm batch about 600 nm with 7 lamellae against 300 nm DLS (intensity-weighted, PI 0.38). The simulator fits all three spectra to 0.001 absorbance, so fit quality alone does not validate a size | Section 4, Fig. 3 |
+| Does the UV simulator give the size of the liposomes? | **At 200 nm, yes** (170 nm against 177 nm DLS). At 100 nm it gives 80 nm against 126 nm DLS, and for the 3-pass 450 nm batch about 630 nm with 4 lamellae against 300 nm DLS (intensity-weighted, PI 0.38). The simulator fits all three spectra to 0.001 absorbance, so fit quality alone does not validate a size | Section 4, Fig. 3 |
 | What limits the accuracy? | The absolute scale for vesicles (bilayer thickness x index, a factor 2-3), the size-width degeneracy of a smooth spectrum, the concentration, and for DLS the intensity weighting and a dust/aggregate tail | Sections 5-6 |
 
 For a drug-delivery research line, where a 30 % error on the size is tolerable, the method is already useful
@@ -28,7 +28,7 @@ the extinction cross-section from Mie theory (Bohren-Huffman), averaged over a l
 (`σ ≈ CV`, `σ ≈ √PI` for DLS-derived widths). The light scattered within the collection half-angle of the
 spectrophotometer (10°, instrument-specific) still reaches the detector and is subtracted from the extinction.
 Solid spheres (latex): `N` from % w/v of solids, density 1.055 g/mL and the polystyrene index 1.591 at 590 nm
-with an approximate Cauchy dispersion. Vesicles: coated sphere (water core), bilayer 4.5 nm, index excess 0.12,
+with an approximate Cauchy dispersion. Vesicles: coated sphere (water core), bilayer 4.5 nm, index excess 0.155 (egg lecithin, section 9),
 `N` from the lipid concentration and the area per lipid; multilamellar vesicles are one shell of repeat
 distance 7 nm with the index averaged over the water gaps. *k* = measured / predicted amplitude (1 = the
 absolute scale agrees).
@@ -130,25 +130,27 @@ geometry correction; the 1:800 value is 20 % lower, as would happen if the "10 %
 
 | Batch | UV simulator: diameter | Lamellae | k | rms (absorbance) | DLS Z-average (nm) | DLS PI | P (400-800) |
 |---|---|---|---|---|---|---|---|
-| 100 nm | 80 nm | 1 | 1.38 | 0.0008 | 125.6 | 0.10 | 3.30 |
-| 200 nm | 174 nm | 1 | 1.78 | 0.0014 | 177.1 | 0.19 | 2.49 |
-| 450 nm (3 passes) | 605 nm | 7 | 0.98 | 0.0013 | 301 (299-303) | 0.38 | 1.89 |
+| 100 nm | 80 nm | 1 | 0.83 | 0.0008 | 125.6 | 0.10 | 3.30 |
+| 200 nm | 170 nm | 1 | 1.08 | 0.0019 | 177.1 | 0.19 | 2.49 |
+| 450 nm (3 passes) | 634 nm | 4 | 1.01 | 0.0009 | 301 (299-303) | 0.38 | 1.89 |
 
-* **200 nm:** UV and DLS agree to 2 %. P (2.49) sits on the vesicle curve at that size (Fig. 5).
+* **200 nm:** UV and DLS agree to 4 %. P (2.49) sits on the vesicle curve at that size (Fig. 5).
 * **100 nm:** the spectrum is steeper (P = 3.30) than a 126 nm vesicle population would give (2.7), so the UV
   points to smaller vesicles, about 80 nm. The DLS Z-average is stable at 125 nm at 1:20 and 1:40 (3 repeats
   each; 1:10 gives 138.5 nm), see Fig. 4. The 47 nm minor peak seen on 18 November in one decomposition did not
   reproduce. Converting the intensity distribution to a number distribution gives a median of 115 nm and does not
   change the UV shape. The discrepancy (UV 0.63 of DLS) is not explained: it is outside the 30 % tolerance and
   is the main open point for liposomes.
-* **450 nm (3 passes):** the amplitude alone (10 mg/mL) is compatible with about 7 lamellae; size and half-angle
-  are degenerate for large particles, so the 605 nm is a model-dependent figure against a DLS of 300 nm
+* **450 nm (3 passes):** the amplitude alone (10 mg/mL) is compatible with about 4 lamellae (3 give k = 1.35, 7 give
+  k = 0.58 and a worse residual, 0.0014 against 0.0009); size and half-angle are degenerate for large particles, so
+  the 634 nm is a model-dependent figure against a DLS of 300 nm
   (PI 0.38, so the Z-average is not a size of a single population).
 * The simulator reproduces every spectrum to 0.001 absorbance with two free parameters; the agreement with DLS
   at 200 nm is the informative result, not the quality of the fit.
-* The absolute amplitude depends on bilayer thickness x index (a factor 2-3), so k = 1.4-1.8 on the unilamellar
-  samples is within that uncertainty; a 85/10/5 POPC/cholesterol/DSPE-PEG2000 mixture lowers k from 1.8 to 1.5
-  on the 200 nm sample without changing the size.
+* The absolute amplitude depends on bilayer thickness x index (a factor 2-3); with the default index excess 0.155
+  the two unilamellar samples give k = 0.8-1.1, i.e. the absolute scale agrees within about 20 %. A 85/10/5
+  POPC/cholesterol/DSPE-PEG2000 mixture lowers k from 1.08 to 0.94 on the 200 nm sample (0.83 to 0.72 on 100 nm)
+  without changing the size.
 
 <img src="figures/fig4_liposome_dls.png" alt="Liposome DLS" width="100%">
 
@@ -167,7 +169,7 @@ spectrum); (b) regularised intensity distributions (repeat 1).*
 | Needs | concentration, index (and bilayer thickness for vesicles), the instrument half-angle | dilution to single scattering, viscosity, index of the solvent |
 | Sensitive to | the mean size and the width together (degenerate); the absolute scale | aggregates and dust; multiple scattering at high optical depth |
 | Latex 130 nm | 130-146 nm (k = 1), shape and P agree with the TEM | 135 nm (173°), 138-165 nm (90°) |
-| Liposomes 200 nm | 174 nm | 177 nm |
+| Liposomes 200 nm | 170 nm | 177 nm |
 
 Agreement between the two is therefore strongest where the sample is narrow and the concentration known; where
 they differ, the difference carries information (a tail, a multilamellar fraction, a wrong concentration).
@@ -190,8 +192,8 @@ they differ, the difference carries information (a tail, a multilamellar fractio
    (for latex) the sample type, press *Fit size + amplitude* (the result does not depend on the starting diameter); read k: close to 1 means the concentration and the model are right, a different
    k with a size close to the DLS one points to the concentration or to the shell (lamellae).
 6. **Expected accuracy** (this study): standard of known composition, concentration and index: size within about 10 %
-   and amplitude within about 10 % at the right dilution; unilamellar 200 nm liposomes: size within 2 % of DLS but
-   with k known only to a factor of about 2; 100 nm liposomes: UV and DLS differ by 37 %; multilamellar batches:
+   and amplitude within about 10 % at the right dilution; unilamellar 200 nm liposomes: size within 4 % of DLS, with
+   k = 1.1 (the two unilamellar samples agree in scale within 20 %); 100 nm liposomes: UV and DLS differ by 37 %; multilamellar batches:
    size not determined by UV alone.
 
 ## 7. Theoretical implications
@@ -223,9 +225,58 @@ they differ, the difference carries information (a tail, a multilamellar fractio
 * Not tested: other latex sizes (the "200 nm" and "450 nm" standards were not measured at 1:80), other lipids and
   vesicles below 60 nm.
 
-## 9. Reproducing the numbers
+## 9. Comparison with the literature
 
-`py report/make_figures.py` from the repository root (needs the example data folders `spettri di esempio/20251118
+The method is not new: the physics and the way of using it are in the literature, which was read for this section
+(Khlebtsov et al. 2001 in full; Melik and Fogler 1983, pages 1-7 of the article, i.e. theory and instrumental
+corrections, not the experimental part; Lo Pò et al. 2023, pages 1-5 of 13, the fitting method).
+
+| Element of the simulator | In the literature | Status |
+|---|---|---|
+| Mie theory of a bilayer (coated) sphere | Khlebtsov et al. [1] use the same model, with Bohren and Huffman as the reference | standard |
+| Absolute amplitude from the mass concentration (specific turbidity) and wavelength exponent as the two observables | [1]; the exponent depends almost only on the outer radius, the specific turbidity on the shell thickness (4-5 nm for egg lecithin, monolamellar) | standard; our 4.5 nm agrees |
+| Average over a size distribution (number-weighted integral of the cross-section) | [1] (gamma distribution, parameter 4), [2] eq. 16, [3] (log-normal for the small particles, Gaussian for aggregates) | standard; the choice of distribution is ours (log-normal, sigma 0.2) |
+| Light scattered inside the detector acceptance angle still reaches the detector | [2] treat the finite acceptance half-angle (corrected scattering coefficient, refraction at the cell wall); [1] avoids it with an aperture diaphragm | principle standard; our **10° is an adjusted value** (about 2° in [2], a lens-pinhole instrument) |
+| Dispersion of the refractive index of water | [1] eq. 7: 1.3364 at 500 nm | same as ours (1.3365) |
+| Shell index excess over water | [1] eq. 8 for egg lecithin: about 1.491 at 500 nm, i.e. an excess of about **0.155** (0.159 at 400 nm, 0.152 at 700 nm) | ours is now 0.155 (the default); see below |
+| Fitting window for the exponent | [1]: 400-600 nm | ours: 400-800 nm, so the P(d) curves are not directly comparable |
+| Multilamellar vesicles, PEG film, cholesterol, polystyrene dispersion | not found in the three papers | our own approximations |
+
+References: [1] N. G. Khlebtsov, L. A. Kovler, S. V. Zagirova, B. N. Khlebtsov, V. A. Bogatyrev, *Spectroturbidimetry of
+liposome suspensions*, Colloid Journal 63(4), 491-498 (2001); [2] D. H. Melik, H. S. Fogler, *Turbidimetric
+determination of particle size distributions of colloidal systems*, J. Colloid Interface Sci. 92(1), 161 (1983);
+[3] C. Lo Pò, V. Iacono, S. Boscarino, M. G. Grimaldi, F. Ruffino, *Monte Carlo approach to the evaluation of nanoparticles
+size distribution from the analysis of UV-Vis-NIR spectra*, Micromachines 14, 2208 (2023), doi 10.3390/mi14122208.
+The formulas of [1] were read from a scanned copy in which some symbols are badly rendered: the coefficients of
+eq. 7 and 8 should be checked against the original before being used in the code.
+
+**Effect of the shell index.** The amplitude of a thin shell goes roughly as (thickness x index excess)^2 ([1], eq. 21-22),
+so 0.155 instead of the rounded 0.12 used in the first version of the simulator raises the predicted spectrum by about
+1.7. Refitting the three liposome spectra with the two values (everything else unchanged: bilayer 4.5 nm, sigma 0.2,
+half-angle 10°; 7 lamellae for the 450 nm batch in both columns):
+
+| Batch | Excess 0.12: d, k | Excess 0.155: d, k |
+|---|---|---|
+| 100 nm | 79.6 nm, 1.38 | 79.5 nm, 0.83 |
+| 200 nm | 173.7 nm, 1.78 | 169.5 nm, 1.08 |
+| 450 nm (7 lamellae) | 604.5 nm, 0.98 | 604.7 nm, 0.58 |
+
+The sizes do not change (within 3 %); the amplitude factor of the two unilamellar batches moves from 1.4-1.8 to 0.8-1.1,
+i.e. the absolute scale agrees within about 20 %. The 450 nm batch then needs about 4 lamellae (k = 1.01) instead of 7:
+the number of lamellae is therefore as uncertain as the shell index. This is a test on three spectra and on a lecithin
+index of another lipid mixture (egg lecithin; ours contain cholesterol and PEG-lipid), not a calibration: the shell
+index of the real vesicles is not measured, and [1] itself reports that the specific turbidity of lecithin from a
+different supplier was markedly lower. The simulator default is therefore 0.155 (editable), to be validated by an independent measurement of the shell (for
+example a phosphate assay, which also fixes the lipid concentration, and cryo-TEM for the number of lamellae).
+
+**Size distribution.** [1] stresses that the average size of a polydisperse suspension depends on the type of average:
+for their gamma distribution the weight-average size is twice the modal one. A broad population can therefore give a
+smaller size from the spectrum than the intensity-weighted DLS Z-average, as for the 100 nm liposomes (80 nm against 126 nm).
+This is compatible with the discrepancy but does not prove it: the simulator assumes sigma = 0.2.
+
+## 10. Reproducing the numbers
+
+`py report/make_figures.py` from the repository root (needs the data folders `size da spettro scattering/20251118
 Lipo varie size`, `20261118 lipo vuoti varie size DLS`, `20261119 lattice 100 nm`, `20261119 DLS lattice e
 liposomi` and `scipy`; PlotStyleKit is used for the style if found next to the project). The DLS part of the script used
 the `.nsz` reader and the correlogram analysis of LabSpectrumManager, which were moved out of it on 2026-11-21: that

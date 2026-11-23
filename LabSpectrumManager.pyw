@@ -184,7 +184,7 @@ SIM_TIPS = {
            "than about 150 nm (it lowers their apparent P) and not for small ones.",
     't': "Thickness of the lipid (POPC) bilayer, nm, used as the scattering shell. In the simulator cholesterol "
          "thickens it (+0.4 nm per 10 mol%).",
-    'dn': "Refractive index excess of the lipid shell over water (about 0.12 for a lipid bilayer). Together with the "
+    'dn': "Refractive index excess of the lipid shell over water (0.155 for egg lecithin, from the literature). Together with the "
           "thickness it sets the absolute amplitude, which goes roughly as (thickness × index excess)²: this is the "
           "main uncertainty of the absolute scale (a factor 2-3).",
     'rep': "Repeat distance of a multilamellar vesicle, nm: bilayer plus the water gap between two lamellae. Used only "
@@ -284,7 +284,7 @@ def _mie_coefs(lam, d, t, dn):
     return np.array(an), np.array(bn), k
 
 
-def vesicle_turbidity(lam, d, t=4.5, dn=0.12, acc_deg=10.0):
+def vesicle_turbidity(lam, d, t=4.5, dn=0.155, acc_deg=10.0):
     """Cross-section (nm^2) of one vesicle (outer diameter d nm, shell t nm, index excess dn) as a spectrophotometer
     sees it: total scattering minus the light scattered inside the collection half-angle acc_deg, which still reaches
     the detector (0 = true extinction)."""
@@ -311,7 +311,7 @@ def vesicle_turbidity(lam, d, t=4.5, dn=0.12, acc_deg=10.0):
     return csca - 2 * np.pi * trapz(dC * np.sin(th)[:, None], th, axis=0)
 
 
-def vesicle_population(lam, d_med, sigma, t=4.5, dn=0.12, acc_deg=10.0, nbin=11):
+def vesicle_population(lam, d_med, sigma, t=4.5, dn=0.155, acc_deg=10.0, nbin=11):
     """Number-weighted mean cross-section of a log-normal population (median d_med nm, shape sigma)."""
     if sigma <= 0:
         return vesicle_turbidity(lam, d_med, t, dn, acc_deg)
@@ -322,19 +322,19 @@ def vesicle_population(lam, d_med, sigma, t=4.5, dn=0.12, acc_deg=10.0, nbin=11)
                                       dn, acc_deg) for zi, wi in zip(z, w))
 
 
-def vesicle_P_curve(diameters, lam, sigma=0.2, t=4.5, dn=0.12, acc_deg=10.0):
+def vesicle_P_curve(diameters, lam, sigma=0.2, t=4.5, dn=0.155, acc_deg=10.0):
     """Exponent P of the pure power law VS*(lam/1000)^-P (no offset, no slope) fitted on the theoretical spectrum of
     vesicles of each median diameter, over the wavelengths lam: the same fit that the panel makes on a measurement."""
     return np.array([fit_power_law(lam, vesicle_population(lam, d, sigma, t, dn, acc_deg), m=0.0)[1]
                      for d in diameters])
 
 
-def vesicle_amplitude(lam, d, sigma, n=1, c_mg_ml=10.0, path_cm=1.0, t_bil=4.5, dn=0.12, rep=7.0, acc_deg=10.0,
+def vesicle_amplitude(lam, d, sigma, n=1, c_mg_ml=10.0, path_cm=1.0, t_bil=4.5, dn=0.155, rep=7.0, acc_deg=10.0,
                       mw=760.08, area=0.65, nbin=11):
     """Absorbance (as the spectrophotometer reads it) of a suspension of n-lamellar vesicles at the wavelengths lam,
     from the lipid concentration alone: vesicles per nm^3 = lipid molecules per nm^3 / lipids per vesicle, times the
     cross-section of one vesicle, times the path. Defaults: POPC (760.08 g/mol, 0.65 nm^2 per lipid), bilayer
-    4.5 nm, index excess 0.12. A multilamellar vesicle is one shell of thickness n*rep-(rep-t_bil) (rep = bilayer +
+    4.5 nm, index excess 0.155 (egg lecithin, Khlebtsov et al. 2001). A multilamellar vesicle is one shell of thickness n*rep-(rep-t_bil) (rep = bilayer +
     water repeat distance) whose index excess is averaged over the water gaps: dn*n*t_bil/thickness; its lipids are
     the sum over the n concentric bilayers. c_mg_ml is the lipid concentration IN THE CUVETTE (mg/mL = g/L)."""
     T = n * rep - (rep - t_bil)
@@ -382,7 +382,7 @@ def solid_sphere_amplitude(lam, d, sigma, c_pct_wv=1.0, path_cm=1.0, n589=1.592,
     return n_per_cm3 * C * 1e-14 * path_cm / np.log(10)
 
 
-def lipid_mixture(chol_pct=0.0, peg_pct=0.0, mw_popc=760.08, area_popc=0.65, t_popc=4.5, dn_popc=0.12,
+def lipid_mixture(chol_pct=0.0, peg_pct=0.0, mw_popc=760.08, area_popc=0.65, t_popc=4.5, dn_popc=0.155,
                   mw_chol=386.65, mw_pegl=2805.5, peg_mw=2000.0, peg_leaflets=2):
     """Effective lipid, area and shell parameters of a POPC / cholesterol / PEG-lipid bilayer (mol%), for
     vesicle_amplitude(): mean molar mass, mean area per molecule, bilayer thickness and shell index excess.
@@ -1127,7 +1127,7 @@ class LabSpectrumManager:
         fields = (("Lipid stock (mg/mL)", 'c', '10'), ("Dilution (1:x)", 'dil', '1'), ("Loss (%)", 'loss', '0'),
                   ("Path (cm)", 'path', '1'), ("Diameter (nm)", 'd', d0), ("Width σ", 'sg', sg0),
                   ("Lamellae", 'n', '1'), ("Half-angle (°)", 'acc', '10'), ("POPC bilayer (nm)", 't', '4.5'),
-                  ("Index excess", 'dn', '0.12'), ("Repeat (nm)", 'rep', '7'), ("POPC MW", 'mw', '760.08'),
+                  ("Index excess", 'dn', '0.155'), ("Repeat (nm)", 'rep', '7'), ("POPC MW", 'mw', '760.08'),
                   ("POPC area (nm²)", 'area', '0.65'), ("Amplitude k", 'k', '1'), ("Offset", 'off', '0'),
                   ("Cholesterol (mol%)", 'chol', '0'), ("PEG-lipid (mol%)", 'peg', '0'),
                   ("PEG chain MW", 'pegmw', '2000'), ("PEG-lipid MW", 'peglmw', '2805.5'),

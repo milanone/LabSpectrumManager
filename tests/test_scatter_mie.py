@@ -149,9 +149,12 @@ class TestAmplitude(unittest.TestCase):
     lam = np.array([500.0])
 
     def test_unilamellar_reference_value(self):
-        """Value computed while developing the model (100 nm, 10 mg/mL POPC, 0.1 cm cuvette)."""
+        """Value computed while developing the model (100 nm, 10 mg/mL POPC, 0.1 cm cuvette, shell index excess 0.155;
+        it was 0.0606 with the earlier default 0.12, and the amplitude goes as the excess squared)."""
         a = lsm.vesicle_amplitude(self.lam, 100.0, 0.2, 1, 10.0, 0.1)[0]
-        self.assertAlmostEqual(a, 0.0606, delta=0.002)
+        self.assertAlmostEqual(a, 0.1007, delta=0.002)
+        a_old = lsm.vesicle_amplitude(self.lam, 100.0, 0.2, 1, 10.0, 0.1, dn=0.12)[0]
+        self.assertAlmostEqual(a / a_old, (0.155 / 0.12) ** 2, delta=0.12)
 
     def test_proportional_to_concentration_and_path(self):
         a = lsm.vesicle_amplitude(self.lam, 150.0, 0.2, 1, 10.0, 1.0)[0]
@@ -172,7 +175,7 @@ class TestAmplitude(unittest.TestCase):
 class TestComposition(unittest.TestCase):
     def test_popc_alone_changes_nothing(self):
         mx = lsm.lipid_mixture()
-        self.assertEqual((mx['mw'], mx['area'], mx['t'], mx['dn'], mx['peg_film']), (760.08, 0.65, 4.5, 0.12, 0.0))
+        self.assertEqual((mx['mw'], mx['area'], mx['t'], mx['dn'], mx['peg_film']), (760.08, 0.65, 4.5, 0.155, 0.0))
 
     def test_85_10_5_mixture(self):
         mx = lsm.lipid_mixture(10, 5)
@@ -180,7 +183,7 @@ class TestComposition(unittest.TestCase):
         self.assertAlmostEqual(mx['area'], 0.5915, places=3)
         self.assertAlmostEqual(mx['t'], 4.9, places=6)
         self.assertAlmostEqual(mx['peg_film'], 0.234, delta=0.01)     # nm of pure PEG per leaflet
-        self.assertGreater(mx['dn'], 0.12 + 0.01)                     # the PEG film adds polarisability
+        self.assertGreater(mx['dn'], 0.155 + 0.01)                     # the PEG film adds polarisability
 
     def test_fractions_above_100_percent_are_refused(self):
         with self.assertRaises(ValueError):
@@ -189,7 +192,7 @@ class TestComposition(unittest.TestCase):
     def test_no_peg_leaflets_removes_the_film_term(self):
         a = lsm.lipid_mixture(10, 5, peg_leaflets=0)
         b = lsm.lipid_mixture(10, 5, peg_leaflets=2)
-        self.assertAlmostEqual(a['dn'], 0.12, places=9)
+        self.assertAlmostEqual(a['dn'], 0.155, places=9)
         self.assertGreater(b['dn'], a['dn'])
 
 

@@ -169,9 +169,9 @@ export — see Dependencies.
   area per lipid) and the collection half-angle. The residual is drawn below, with the rms and the amplitude factor k
   that would make them agree (k = 1: the absolute scale agrees). *Fit size* finds the diameter with the least rms at the
   given k; *Fit size + amplitude* also solves k. The absolute scale depends on bilayer thickness x index (a factor 2-3),
-  so k is best calibrated on extruded unilamellar samples and then used to count the lamellae of others. On the three
-  samples above: 100 nm (undiluted, 0.1 cm) fits at 80 nm with k = 1.4, 200 nm at 175 nm with k = 1.8 (DLS 177 nm), the
-  3-pass 450 nm sample at ~600 nm with 7 lamellae and k = 1.0 (DLS 300-410 nm).
+  so k is best calibrated on extruded unilamellar samples and then used to count the lamellae of others. The default shell index excess is 0.155, the value for egg lecithin of Khlebtsov et al. On the three
+  samples above: 100 nm (undiluted, 0.1 cm) fits at 80 nm with k = 0.8, 200 nm at 170 nm with k = 1.1 (DLS 177 nm), the
+  3-pass 450 nm sample at ~630 nm with 4 lamellae and k = 1.0 (DLS 300-410 nm).
   The *Sample type* box switches to **solid spheres (latex)**: the concentration is then in % w/v of solids, with the particle index (polystyrene
   1.592 at 589 nm, with the dispersion of polystyrene) and the density (1.055 g/mL) instead of the lipid fields; it is
   meant for a size standard such as a 100 nm carboxyl latex (the polystyrene index dispersion is approximate).
@@ -179,11 +179,11 @@ export — see Dependencies.
   predicted from the certificate with no free parameter is within 0-8 % at 1:200-1:400 (k = 1.00 and 1.08, shape within
   2 %), the measured exponent P (3.35-3.53) agrees with the theory at 130 nm, and DLS (Z-average as the diameter) predicts
   the UV amplitude within 6-17 % and its shape within 2-5 %. DLS Z-average is 6-27 % above the TEM diameter at 90°
-  (135 nm at 173°), and the 100 nm liposomes give 80 nm from the UV against 126 nm from DLS (agreement at 200 nm: 174 against
+  (135 nm at 173°), and the 100 nm liposomes give 80 nm from the UV against 126 nm from DLS (agreement at 200 nm: 170 against
   177 nm). Details, tables, figures and practical recommendations: [`report/size_from_turbidity_report.md`](report/size_from_turbidity_report.md).
   The lipid composition (mol% of cholesterol and of PEG-lipid; the rest is POPC) sets the mean molar mass, the area
   per molecule, the bilayer thickness and a film of PEG in the shell (order-of-magnitude assumptions, stated in
-  `lipid_mixture()`): for a 85/10/5 POPC/cholesterol/DSPE-PEG2000 mixture k drops from 1.8 to 1.5 on the 200 nm
+  `lipid_mixture()`): for a 85/10/5 POPC/cholesterol/DSPE-PEG2000 mixture k drops from 1.1 to 0.9 on the 200 nm
   sample, the sizes do not change.
 - **Linear baseline** (FTIR) — a two-anchor baseline, draggable on the graph, for FTIR spectra.
 - **Adaptive baseline** — a lower envelope via iterated moving averages with a minimum
@@ -219,6 +219,16 @@ export — see Dependencies.
   numbers from the example data (not in the repository)
 - `tests/test_bmg_reader.py` — unit tests for the BMG plate-reader CSV reader (synthetic files;
   run with `python -m unittest discover -s tests -v`)
+
+## References
+
+The method (Mie theory of a bilayer sphere, specific turbidity and wavelength exponent, acceptance angle of the detector) follows:
+
+- N. G. Khlebtsov, L. A. Kovler, S. V. Zagirova, B. N. Khlebtsov, V. A. Bogatyrev, *Spectroturbidimetry of liposome suspensions*, Colloid Journal 63(4), 491-498 (2001).
+- D. H. Melik, H. S. Fogler, *Turbidimetric determination of particle size distributions of colloidal systems*, J. Colloid Interface Sci. 92(1), 161 (1983).
+- C. Lo Pò et al., *Monte Carlo approach to the evaluation of nanoparticles size distribution from the analysis of UV-Vis-NIR spectra*, Micromachines 14, 2208 (2023), doi 10.3390/mi14122208.
+
+What comes from them and what are our own assumptions (collection half-angle 10°, shell parameters, multilamellar model, PEG film) is in section 9 of the [report](report/size_from_turbidity_report.md).
 
 ## License
 

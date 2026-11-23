@@ -1,5 +1,5 @@
 """Builds the figures and the numbers of report/size_from_turbidity_report.md from the example data
-(`spettri di esempio/`, not in the repository because it holds real samples).
+(`size da spettro scattering/`, not in the repository because it holds real samples).
 
 Run:  py report/make_figures.py          (writes report/figures/*.png and prints the numbers used in the report)
 """
@@ -18,7 +18,7 @@ from scipy.optimize import minimize_scalar
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BASE = os.path.dirname(HERE)
-DATA = os.path.join(BASE, "spettri di esempio")
+DATA = os.path.join(BASE, "size da spettro scattering")
 OUT = os.path.join(HERE, "figures")
 os.makedirs(OUT, exist_ok=True)
 
@@ -129,82 +129,89 @@ fig.tight_layout(pad=1.6, h_pad=2.4)
 fig.savefig(os.path.join(OUT, "fig1_latex_uv_vs_mie.png"), dpi=150)
 plt.close(fig)
 
-# =====================================================================================================================
-# 2. Latex DLS: Z-average against dilution and angle, size distributions, consistency of the dilutions
-# =====================================================================================================================
-D19 = "20261119 DLS lattice e liposomi"
-dls19 = read_dls(D19)
-LAT_KEYS = {800: "Polistirene 1a800 in NaCl 10 mM", 400: "Polistirene 1a400 in NaCl 10 mM",
-            200: "Polistirene 1a200 in NaCl 10 mM", 100: "Polistirene 1a100 in NaCl 10 mM"}
-ND = {800: 1.0, 400: 0.10, 200: 0.10}
-I0 = (31692 + 31811) / 2.0
-dls_lat = {}
-for dl, key in LAT_KEYS.items():
-    rs = dls19[key]
-    dls_lat[dl] = dict(z=float(np.mean([r["z_average"] for r in rs])), pi=float(np.mean([r["pi"] for r in rs])),
-                       cr=float(np.mean([r["cr"] for r in rs])), n=len(rs), angle=rs[0]["angle"],
-                       t_before=float(np.mean([r["transmission_before"] for r in rs])), rs=rs)
-rs90 = dls19["polistirene 1a100 in NaCl 10 mM 90 gradi"]
-res["latex_dls"] = {dl: {x: v for x, v in d.items() if x != "rs"} for dl, d in dls_lat.items()}
-res["latex_dls_1to100_90deg"] = dict(z=float(np.mean([r["z_average"] for r in rs90])),
-                                      pi=float(np.mean([r["pi"] for r in rs90])), n=len(rs90))
+# The DLS files are read by DLSManager now: without a `read_nsz` the DLS figures (2 and 4) are skipped and the
+# Z-average and PI of the liposomes (read earlier from the .nsz files) are taken from this table.
+HAVE_DLS = hasattr(m, "read_nsz")
+LIP_DLS_VALUES = {"100 nm": (125.6, 0.096), "200 nm": (177.1, 0.185), "450 nm (3 passes)": (301.2, 0.379)}
 
-# scaling between the two dilutions (expected x2 for the concentration)
-tau = {dl: float(np.log(I0 / dls_lat[dl]["t_before"])) for dl in (800, 400, 200)}
-cr_nd = {dl: dls_lat[dl]["cr"] / ND[dl] for dl in (800, 400, 200)}
-ratios = {"UV absorbance at 532 nm": lat["L2"]["A532"] / lat["L1"]["A532"],
-          "DLS extinction ln(I0/T)": tau[400] / tau[800],
-          "DLS count rate / ND": cr_nd[400] / cr_nd[800]}
-res["dilution_ratios_L2_over_L1"] = ratios
-# count rate / extinction with the self-attenuation of the 1 x 0.4 cm cell (0.5 cm in, 0.2 cm out)
-R = {dl: cr_nd[dl] * np.exp(tau[dl] * 0.7) / tau[dl] for dl in (800, 400, 200)}
-res["R_count_rate_over_extinction"] = R
+if HAVE_DLS:
+    # =====================================================================================================================
+    # 2. Latex DLS: Z-average against dilution and angle, size distributions, consistency of the dilutions
+    # =====================================================================================================================
+    D19 = "20261119 DLS lattice e liposomi"
+    dls19 = read_dls(D19)
+    LAT_KEYS = {800: "Polistirene 1a800 in NaCl 10 mM", 400: "Polistirene 1a400 in NaCl 10 mM",
+                200: "Polistirene 1a200 in NaCl 10 mM", 100: "Polistirene 1a100 in NaCl 10 mM"}
+    ND = {800: 1.0, 400: 0.10, 200: 0.10}
+    I0 = (31692 + 31811) / 2.0
+    dls_lat = {}
+    for dl, key in LAT_KEYS.items():
+        rs = dls19[key]
+        dls_lat[dl] = dict(z=float(np.mean([r["z_average"] for r in rs])), pi=float(np.mean([r["pi"] for r in rs])),
+                           cr=float(np.mean([r["cr"] for r in rs])), n=len(rs), angle=rs[0]["angle"],
+                           t_before=float(np.mean([r["transmission_before"] for r in rs])), rs=rs)
+    rs90 = dls19["polistirene 1a100 in NaCl 10 mM 90 gradi"]
+    res["latex_dls"] = {dl: {x: v for x, v in d.items() if x != "rs"} for dl, d in dls_lat.items()}
+    res["latex_dls_1to100_90deg"] = dict(z=float(np.mean([r["z_average"] for r in rs90])),
+                                          pi=float(np.mean([r["pi"] for r in rs90])), n=len(rs90))
 
-fig, axd = plt.subplot_mosaic([["a"], ["b"], ["c"], ["d"]], figsize=(9, 21))
-ax = [axd["a"], axd["b"], axd["c"]]
-ax[0].axhspan(TEM_D - 14, TEM_D + 14, color="0.88", label="TEM 130 ± 14 nm (lot)")
-ax[0].axhline(TEM_D, color="0.4", lw=0.8)
-xs = [1.0 / d for d in (800, 400, 200)]
-for x, dl in zip(xs, (800, 400, 200)):
-    ax[0].plot([x] * dls_lat[dl]["n"], [r["z_average"] for r in dls_lat[dl]["rs"]], "o", color=COL[0], alpha=0.7, ms=4)
-ax[0].plot(xs, [dls_lat[d]["z"] for d in (800, 400, 200)], "-", color=COL[0], label="latex, 90° (3 repeats)")
-ax[0].plot([0.01] * 3, [r["z_average"] for r in dls_lat[100]["rs"]], "^", color=COL[1], mfc="none", label="1:100, 173°")
-ax[0].plot([0.01] * 3, [r["z_average"] for r in rs90], "s", color=COL[0], mfc="none", label="1:100, 90°")
-ax[0].set_xscale("log")
-ax[0].set_xlabel("Dilution (1/x)")
-ax[0].set_ylabel("Z-average (nm)")
-ax[0].set_ylim(110, 185)
-ax[0].legend(fontsize=14, loc="lower center", bbox_to_anchor=(0.5, 1.02), ncol=2, frameon=False)
-mark(ax[0], "a")
-for dl, ls in zip((800, 400, 200), ("-", "--", ":")):
-    a = m.dls_analyse(dls_lat[dl]["rs"][0]["rec"], m.DLS_MODELS[0])
-    ax[1].semilogx(a["d"], a["p"] / a["p"].max(), ls, color=COL[0], label=f"1:{dl} (90°)")
-a = m.dls_analyse(dls_lat[100]["rs"][0]["rec"], m.DLS_MODELS[0])
-ax[1].semilogx(a["d"], a["p"] / a["p"].max(), "-", color=COL[1], label="1:100 (173°)")
-ax[1].axvline(TEM_D, color="0.4", lw=0.8)
-ax[1].set_xlim(40, 1500)
-ax[1].set_xlabel("Diameter (nm)")
-ax[1].set_ylabel("Intensity-weighted")
-ax[1].legend(fontsize=14)
-mark(ax[1], "b")
-names = list(ratios)
-ax[2].bar(range(3), [ratios[n] for n in names], color=COL[2], width=0.55)
-ax[2].axhline(2.0, color="k", lw=0.9, ls="--")
-ax[2].text(2.4, 2.03, "nominal 2", ha="right", fontsize=14)
-ax[2].set_xticks(range(3))
-ax[2].set_xticklabels(["UV A(532)", "DLS\nextinction", "DLS count\nrate / ND"], fontsize=16)
-ax[2].set_ylabel("Ratio L2 / L1")
-ax[2].set_ylim(0, 2.3)
-mark(ax[2], "c")
-axd["d"].bar(range(3), [R[800], R[400], R[200]], color=COL[3], width=0.55)
-axd["d"].set_xticks(range(3))
-axd["d"].set_xticklabels(["1:800", "1:400", "1:200"])
-axd["d"].set_ylabel("Count rate / extinction")
-axd["d"].set_xlabel("Dilution")
-mark(axd["d"], "d")
-fig.tight_layout(pad=1.6, h_pad=2.4)
-fig.savefig(os.path.join(OUT, "fig2_latex_dls.png"), dpi=150)
-plt.close(fig)
+    # scaling between the two dilutions (expected x2 for the concentration)
+    tau = {dl: float(np.log(I0 / dls_lat[dl]["t_before"])) for dl in (800, 400, 200)}
+    cr_nd = {dl: dls_lat[dl]["cr"] / ND[dl] for dl in (800, 400, 200)}
+    ratios = {"UV absorbance at 532 nm": lat["L2"]["A532"] / lat["L1"]["A532"],
+              "DLS extinction ln(I0/T)": tau[400] / tau[800],
+              "DLS count rate / ND": cr_nd[400] / cr_nd[800]}
+    res["dilution_ratios_L2_over_L1"] = ratios
+    # count rate / extinction with the self-attenuation of the 1 x 0.4 cm cell (0.5 cm in, 0.2 cm out)
+    R = {dl: cr_nd[dl] * np.exp(tau[dl] * 0.7) / tau[dl] for dl in (800, 400, 200)}
+    res["R_count_rate_over_extinction"] = R
+
+    fig, axd = plt.subplot_mosaic([["a"], ["b"], ["c"], ["d"]], figsize=(9, 21))
+    ax = [axd["a"], axd["b"], axd["c"]]
+    ax[0].axhspan(TEM_D - 14, TEM_D + 14, color="0.88", label="TEM 130 ± 14 nm (lot)")
+    ax[0].axhline(TEM_D, color="0.4", lw=0.8)
+    xs = [1.0 / d for d in (800, 400, 200)]
+    for x, dl in zip(xs, (800, 400, 200)):
+        ax[0].plot([x] * dls_lat[dl]["n"], [r["z_average"] for r in dls_lat[dl]["rs"]], "o", color=COL[0], alpha=0.7, ms=4)
+    ax[0].plot(xs, [dls_lat[d]["z"] for d in (800, 400, 200)], "-", color=COL[0], label="latex, 90° (3 repeats)")
+    ax[0].plot([0.01] * 3, [r["z_average"] for r in dls_lat[100]["rs"]], "^", color=COL[1], mfc="none", label="1:100, 173°")
+    ax[0].plot([0.01] * 3, [r["z_average"] for r in rs90], "s", color=COL[0], mfc="none", label="1:100, 90°")
+    ax[0].set_xscale("log")
+    ax[0].set_xlabel("Dilution (1/x)")
+    ax[0].set_ylabel("Z-average (nm)")
+    ax[0].set_ylim(110, 185)
+    ax[0].legend(fontsize=14, loc="lower center", bbox_to_anchor=(0.5, 1.02), ncol=2, frameon=False)
+    mark(ax[0], "a")
+    for dl, ls in zip((800, 400, 200), ("-", "--", ":")):
+        a = m.dls_analyse(dls_lat[dl]["rs"][0]["rec"], m.DLS_MODELS[0])
+        ax[1].semilogx(a["d"], a["p"] / a["p"].max(), ls, color=COL[0], label=f"1:{dl} (90°)")
+    a = m.dls_analyse(dls_lat[100]["rs"][0]["rec"], m.DLS_MODELS[0])
+    ax[1].semilogx(a["d"], a["p"] / a["p"].max(), "-", color=COL[1], label="1:100 (173°)")
+    ax[1].axvline(TEM_D, color="0.4", lw=0.8)
+    ax[1].set_xlim(40, 1500)
+    ax[1].set_xlabel("Diameter (nm)")
+    ax[1].set_ylabel("Intensity-weighted")
+    ax[1].legend(fontsize=14)
+    mark(ax[1], "b")
+    names = list(ratios)
+    ax[2].bar(range(3), [ratios[n] for n in names], color=COL[2], width=0.55)
+    ax[2].axhline(2.0, color="k", lw=0.9, ls="--")
+    ax[2].text(2.4, 2.03, "nominal 2", ha="right", fontsize=14)
+    ax[2].set_xticks(range(3))
+    ax[2].set_xticklabels(["UV A(532)", "DLS\nextinction", "DLS count\nrate / ND"], fontsize=16)
+    ax[2].set_ylabel("Ratio L2 / L1")
+    ax[2].set_ylim(0, 2.3)
+    mark(ax[2], "c")
+    axd["d"].bar(range(3), [R[800], R[400], R[200]], color=COL[3], width=0.55)
+    axd["d"].set_xticks(range(3))
+    axd["d"].set_xticklabels(["1:800", "1:400", "1:200"])
+    axd["d"].set_ylabel("Count rate / extinction")
+    axd["d"].set_xlabel("Dilution")
+    mark(axd["d"], "d")
+    fig.tight_layout(pad=1.6, h_pad=2.4)
+    fig.savefig(os.path.join(OUT, "fig2_latex_dls.png"), dpi=150)
+    plt.close(fig)
+
 
 # =====================================================================================================================
 # 3. Liposomes: UV against the simulator, with the DLS
@@ -213,9 +220,9 @@ uv_lip = {}
 for n, v in read_dsp("20251118 Lipo varie size").items():
     uv_lip["0.45" if "cuv" not in n else n.split(" in PBS ")[-1]] = v
 LIP = {"100 nm": dict(key="0.1", dil=1.0, path=0.1, n=1), "200 nm": dict(key="0.2", dil=1.0, path=0.1, n=1),
-       "450 nm (3 passes)": dict(key="0.45", dil=40.0, path=1.0, n=7)}
+       "450 nm (3 passes)": dict(key="0.45", dil=40.0, path=1.0, n=4)}
 D18 = "20261118 lipo vuoti varie size DLS"
-dls18 = read_dls(D18)
+dls18 = read_dls(D18) if HAVE_DLS else None
 LIP_DLS = {"100 nm": "lipo 100 nm 1a10 in PBS", "200 nm": "lipo 200 nm 1a40 in PBS",
            "450 nm (3 passes)": ["lipo 450 nm 1a40 in PBS", "lipo 450 nm 1a40 in PBS bis"]}
 lam_l = np.arange(350.0, 801.0, 8.0)
@@ -247,8 +254,11 @@ ax = [axd["a"], axd["b"], axd["c"]]
 for i, (lab, p) in enumerate(LIP.items()):
     d, k, rms, A, ym = lip_fit(p["key"], p["dil"], p["path"], p["n"])
     dz = LIP_DLS[lab]
-    zs = [r["z_average"] for key in (dz if isinstance(dz, list) else [dz]) for r in dls18[key]]
-    pis = [r["pi"] for key in (dz if isinstance(dz, list) else [dz]) for r in dls18[key]]
+    if dls18 is not None:
+        zs = [r["z_average"] for key in (dz if isinstance(dz, list) else [dz]) for r in dls18[key]]
+        pis = [r["pi"] for key in (dz if isinstance(dz, list) else [dz]) for r in dls18[key]]
+    else:
+        zs, pis = [LIP_DLS_VALUES[lab][0]], [LIP_DLS_VALUES[lab][1]]
     x, y = uv_lip[p["key"]]
     sel = (x >= 400) & (x <= 800)
     P = m.fit_power_law(x[sel], y[sel], m=0.0)[1]
@@ -265,7 +275,7 @@ x = np.arange(3)
 axd["d"].bar(x - 0.2, [v["d_uv"] for v in lip.values()], 0.4, color=COL[2], label="UV simulator")
 axd["d"].bar(x + 0.2, [v["z_dls"] for v in lip.values()], 0.4, color=COL[3], label="DLS Z-average")
 axd["d"].set_xticks(x)
-axd["d"].set_xticklabels(["100 nm", "200 nm", "450 nm\n(7 lamellae)"])
+axd["d"].set_xticklabels(["100 nm", "200 nm", "450 nm\n(4 lamellae)"])
 axd["d"].set_ylabel("Diameter (nm)")
 axd["d"].legend(loc="upper left")
 mark(axd["d"], "d")
@@ -274,36 +284,38 @@ fig.savefig(os.path.join(OUT, "fig3_liposome_uv_vs_simulator.png"), dpi=150)
 plt.close(fig)
 res["liposomes"] = lip
 
-# =====================================================================================================================
-# 4. Liposome '100' DLS against dilution, next to the latex
-# =====================================================================================================================
-lip100 = {}
-for dl in (10, 20, 40):
-    rs = dls19["lipo 100 1a%d in PBS" % dl]
-    lip100[dl] = dict(z=float(np.mean([r["z_average"] for r in rs])), pi=float(np.mean([r["pi"] for r in rs])),
-                      cr=float(np.mean([r["cr"] for r in rs])), rs=rs)
-res["liposome_100_dls_19Nov"] = {dl: {x: v for x, v in d.items() if x != "rs"} for dl, d in lip100.items()}
-fig, ax = plt.subplots(2, 1, figsize=(9, 11.5))
-for dl in (10, 20, 40):
-    ax[0].plot([1.0 / dl] * 3, [r["z_average"] for r in lip100[dl]["rs"]], "o", color=COL[3], alpha=0.7, ms=4)
-ax[0].plot([1.0 / d for d in (40, 20, 10)], [lip100[d]["z"] for d in (40, 20, 10)], "-", color=COL[3], label="liposomes '100' (90°)")
-ax[0].axhline(lip["100 nm"]["d_uv"], color="k", ls=":", lw=1.0, label="UV simulator, same lot (undiluted)")
-ax[0].set_xscale("log")
-ax[0].set_xlabel("Dilution (1/x)")
-ax[0].set_ylabel("Z-average (nm)")
-ax[0].legend(fontsize=14)
-mark(ax[0], "a")
-for dl, ls in zip((40, 20, 10), ("-", "--", ":")):
-    a = m.dls_analyse(lip100[dl]["rs"][0]["rec"], m.DLS_MODELS[0])
-    ax[1].semilogx(a["d"], a["p"] / a["p"].max(), ls, color=COL[3], label=f"1:{dl}")
-ax[1].set_xlim(30, 2000)
-ax[1].set_xlabel("Diameter (nm)")
-ax[1].set_ylabel("Intensity-weighted")
-ax[1].legend(fontsize=14)
-mark(ax[1], "b")
-fig.tight_layout(pad=1.6, h_pad=2.4)
-fig.savefig(os.path.join(OUT, "fig4_liposome_dls.png"), dpi=150)
-plt.close(fig)
+if HAVE_DLS:
+    # =====================================================================================================================
+    # 4. Liposome '100' DLS against dilution, next to the latex
+    # =====================================================================================================================
+    lip100 = {}
+    for dl in (10, 20, 40):
+        rs = dls19["lipo 100 1a%d in PBS" % dl]
+        lip100[dl] = dict(z=float(np.mean([r["z_average"] for r in rs])), pi=float(np.mean([r["pi"] for r in rs])),
+                          cr=float(np.mean([r["cr"] for r in rs])), rs=rs)
+    res["liposome_100_dls_19Nov"] = {dl: {x: v for x, v in d.items() if x != "rs"} for dl, d in lip100.items()}
+    fig, ax = plt.subplots(2, 1, figsize=(9, 11.5))
+    for dl in (10, 20, 40):
+        ax[0].plot([1.0 / dl] * 3, [r["z_average"] for r in lip100[dl]["rs"]], "o", color=COL[3], alpha=0.7, ms=4)
+    ax[0].plot([1.0 / d for d in (40, 20, 10)], [lip100[d]["z"] for d in (40, 20, 10)], "-", color=COL[3], label="liposomes '100' (90°)")
+    ax[0].axhline(lip["100 nm"]["d_uv"], color="k", ls=":", lw=1.0, label="UV simulator, same lot (undiluted)")
+    ax[0].set_xscale("log")
+    ax[0].set_xlabel("Dilution (1/x)")
+    ax[0].set_ylabel("Z-average (nm)")
+    ax[0].legend(fontsize=14)
+    mark(ax[0], "a")
+    for dl, ls in zip((40, 20, 10), ("-", "--", ":")):
+        a = m.dls_analyse(lip100[dl]["rs"][0]["rec"], m.DLS_MODELS[0])
+        ax[1].semilogx(a["d"], a["p"] / a["p"].max(), ls, color=COL[3], label=f"1:{dl}")
+    ax[1].set_xlim(30, 2000)
+    ax[1].set_xlabel("Diameter (nm)")
+    ax[1].set_ylabel("Intensity-weighted")
+    ax[1].legend(fontsize=14)
+    mark(ax[1], "b")
+    fig.tight_layout(pad=1.6, h_pad=2.4)
+    fig.savefig(os.path.join(OUT, "fig4_liposome_dls.png"), dpi=150)
+    plt.close(fig)
+
 
 # =====================================================================================================================
 # 5. Theory: exponent P against diameter, with the measured exponents
