@@ -55,7 +55,7 @@ Il limite inferiore P ≥ 1 non è arbitrario: è il punto in cui il termine di 
 
 ### Il termine lineare M: perché esiste ma è bloccato di default
 
-La componente lineare `M·λ` intercetta derive di baseline non spiegabili dal termine di potenza (vedi Parte 1). Con P libero nell'intervallo [1, 5], il termine di potenza da solo copre la quasi totalità dei casi osservati: quando P è stimato correttamente, M resta vicino a zero anche quando è incluso nel fit.
+La componente lineare `M·λ` intercetta derive di baseline non spiegabili dal termine di potenza (vedi Parte 1). Con P libero (da 1 in su, senza limite superiore), il termine di potenza da solo copre la quasi totalità dei casi osservati: quando P è stimato correttamente, M resta vicino a zero anche quando è incluso nel fit.
 
 Per questo **M è fissato a 0 di default** (checkbox "fix slope" attivo) e va sbloccato solo se l'auto-fit non converge in modo soddisfacente lasciando P libero — cioè come rete di sicurezza, non come parametro di uso corrente.
 
@@ -64,7 +64,7 @@ Per questo **M è fissato a 0 di default** (checkbox "fix slope" attivo) e va sb
 Il pulsante "Auto (fit window)" stima i parametri risolvendo un problema di minimi quadrati vincolato (SLSQP, richiede `scipy`) sulla finestra delimitata dalle due linee verticali trascinabili — che per default coprono l'intero spettro: l'algoritmo vincolato converge in modo affidabile su tutta la banda:
 
 - il vincolo di disuguaglianza impone che la traccia di correzione non superi mai lo spettro misurato (traccia ≤ spettro, punto per punto);
-- se **"fix P" non è spuntato**, l'esponente P viene ottimizzato insieme a VS, OFF (e M, se sbloccato) entro i limiti [1, 5]; se è spuntato, P resta al valore corrente e il fit si riduce a un problema lineare (risolto con jacobiano analitico, più veloce e stabile);
+- se **"fix P" non è spuntato**, l'esponente P viene ottimizzato insieme a VS, OFF (e M, se sbloccato), da 1 in su e senza limite superiore (se supera il fondo scala dello slider, lo slider si allarga); se è spuntato, P resta al valore corrente e il fit si riduce a un problema lineare (risolto con jacobiano analitico, più veloce e stabile);
 - se **"fix slope" non è spuntato**, M viene incluso tra i parametri liberi del fit; se è spuntato (default), resta bloccato al valore corrente (0 di norma) e il fit ottimizza solo VS, OFF (ed eventualmente P);
 - senza `scipy` installato, l'auto-fit si riduce alla soluzione ai minimi quadrati non vincolata, con un abbassamento dell'offset a posteriori per garantire comunque traccia ≤ spettro.
 
@@ -78,7 +78,7 @@ Il pulsante "Auto (fit window)" stima i parametri risolvendo un problema di mini
 
 ### Offset bloccato a 0 e curva P(d) dei liposomi
 
-Per particelle che non assorbono (liposomi) la legge pura `VS·(λ/1000)^(−P)` è il modello giusto, e un offset libero ne assorbe parte della curvatura abbassando P di 0.3-0.7 (a 60-120 nm). Spuntando **"fix offset = 0"**, **Auto** esegue un fit ai minimi quadrati semplice (senza il vincolo traccia ≤ spettro, che senza offset da abbassare spingerebbe la traccia sotto i dati e distorcerebbe P), con P libero e pendenza bloccata a 0. Il residuo mostra se la baseline è davvero nulla.
+Per particelle che non assorbono (liposomi) la legge pura `VS·(λ/1000)^(−P)` è il modello giusto, e un offset libero ne assorbe parte della curvatura abbassando P di 0.3-0.7 (a 60-120 nm). Spuntando **"fix offset = 0"**, **Auto** esegue un fit ai minimi quadrati semplice (senza il vincolo traccia ≤ spettro, che senza offset da abbassare spingerebbe la traccia sotto i dati e distorcerebbe P), con P libero e pendenza bloccata a 0. Il residuo mostra se la baseline è davvero nulla. Con l'offset bloccato si può spuntare anche **"keep under data"**: il fit resta ai minimi quadrati ma con il vincolo che la traccia non superi i punti sperimentali (su tutto lo spettro, non solo nella finestra di fit); senza offset da abbassare è VS che cede (i punti a zero o negativi, per esempio dopo la sottrazione di un bianco, restano fuori dal vincolo, perché nessuna traccia positiva può stare sotto di loro: l'etichetta del pannello dice quanti sono; se sono molti il vincolo resta dominato dai punti vicini a zero e VS può risultare piccolissimo), e i valori mostrati (P a 3 decimali, VS a 6 cifre significative) rispettano il vincolo. P e VS non hanno limiti: con P molto grande VS diventa piccolissimo e lo slider di VS si adatta.
 
 La teoria di Mie per una vescicola (guscio di 4.5 nm, Δn 0.155 (lecitina d'uovo, Khlebtsov et al. 2001), acqua dentro e fuori) con popolazione log-normale (σ 0.2 e 0.3) dà il P che lo stesso fit produce sullo spettro teorico di vescicole di ogni diametro (funzione `vesicle_P_curve()`; figura 5 del [report](report/size_from_turbidity_report.md)), con l'angolo di semiapertura di raccolta dello strumento (10° per lo spettrofotometro usato finora; la luce diffusa entro quell'angolo arriva al rivelatore e non conta come estinzione). Il pulsante che mostrava la curva nel programma è stato tolto: il simulatore sotto ricava la dimensione dalla forma dell'intero spettro e fa di più.
 

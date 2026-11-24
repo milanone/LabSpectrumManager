@@ -156,7 +156,9 @@ export — see Dependencies.
   button (form and parameters, ready for a report); the corrected spectrum keeps the parameters and
   the equation (`Scatter equation`, full precision) in its metadata. Theory and operating procedure in
   [`scattering_correction_theory.md`](scattering_correction_theory.md). *fix offset = 0* makes **Auto** fit the
-  pure power law by plain least squares (the right model for non-absorbing particles such as liposomes). The
+  pure power law by plain least squares (the right model for non-absorbing particles such as liposomes);
+  *keep under data*, available with the offset fixed, forces the trace under the experimental points anyway (VS gives
+  way; points at or below zero, as after a blank subtraction, are left out of the constraint and counted in the label). The exponent P has no upper limit (the fit and the slider follow it, and VS with it, down to very small values). The
   exponent P that Mie theory predicts for unilamellar vesicles is steep up to about 130 nm and flat above it
   (figure 5 of the [report](report/size_from_turbidity_report.md)), so above that size P alone does not give the
   size: the Spectrum simulator fits it from the whole spectrum. Needs `scipy`. Checked on three POPC–cholesterol–PEG

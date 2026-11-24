@@ -34,6 +34,59 @@ class TestFitPowerLaw(unittest.TestCase):
         self.assertAlmostEqual(vs, 0.08, places=4)
         self.assertLess(rms, 1e-5)
 
+    def test_the_exponent_has_no_upper_limit(self):
+        y = 0.5 * (self.x / 1000.0) ** -7.5
+        vs, p, m, rms = lsm.fit_power_law(self.x, y)
+        self.assertAlmostEqual(p, 7.5, places=2)
+        self.assertAlmostEqual(vs, 0.5, places=3)
+        self.assertLess(rms, 1e-4)
+
+    def test_under_keeps_the_trace_below_the_points_and_gives_way_with_vs(self):
+        y = 0.5 * (self.x / 1000.0) ** -3.0
+        y[40] -= 0.03                                                     # one point below the power law
+        free = lsm.fit_power_law(self.x, y)
+        vs, p, m, rms = lsm.fit_power_law(self.x, y, under=(self.x, y))
+        trace = vs * (self.x / 1000.0) ** -p - m * self.x
+        self.assertLessEqual(float(np.max(trace - y)), 1e-12)
+        self.assertLess(vs, free[0])                                      # VS gave way
+        self.assertLess(float(np.min(y - trace)), 1e-3)                  # and the trace touches the data
+
+    def test_under_leaves_an_exact_power_law_alone(self):
+        y = 0.5 * (self.x / 1000.0) ** -3.0
+        vs, p, m, rms = lsm.fit_power_law(self.x, y, under=(self.x, y))
+        self.assertAlmostEqual(p, 3.0, places=3)
+        self.assertAlmostEqual(vs, 0.5, places=3)
+
+    def test_under_holds_after_rounding_also_with_a_free_slope_and_a_fixed_exponent(self):
+        rng = np.random.default_rng(3)
+        y = 0.05 * (self.x / 1000.0) ** -4.0 + 0.1 * np.exp(-0.5 * ((self.x - 520) / 25) ** 2) + rng.normal(0, 0.001, self.x.size)
+        for kw in ({'m': None}, {'P': 3.3}, {'m': 0.0}):
+            vs, p, m, rms = lsm.fit_power_law(self.x, y, under=(self.x, y), **kw)
+            trace = vs * (self.x / 1000.0) ** -p - m * self.x
+            self.assertLessEqual(float(np.max(trace - y)), 1e-12, msg=str(kw))
+
+    def test_under_also_applies_to_points_outside_the_fitted_window(self):
+        y = 0.5 * (self.x / 1000.0) ** -3.0
+        y[-1] -= 0.05                                                     # the last point, left out of the window
+        win = self.x < 780
+        vs, p, m, rms = lsm.fit_power_law(self.x[win], y[win], under=(self.x, y))
+        trace = vs * (self.x / 1000.0) ** -p - m * self.x
+        self.assertLessEqual(float(np.max(trace - y)), 1e-12)
+
+    def test_under_leaves_out_the_points_at_or_below_zero(self):
+        y = 0.5 * (self.x / 1000.0) ** -3.0
+        y[-30:] = -0.001                                                  # a blank-corrected tail below zero
+        for kw in ({'m': 0.0}, {'m': None}):
+            vs, p, m, rms = lsm.fit_power_law(self.x, y, under=(self.x, y), **kw)
+            self.assertGreater(vs, 0.0, msg=str(kw))                      # no collapse to VS = 0
+            pos = y > 0
+            trace = vs * (self.x / 1000.0) ** -p - m * self.x
+            self.assertLessEqual(float(np.max((trace - y)[pos])), 1e-12, msg=str(kw))
+
+    def test_a_limit_can_still_be_asked_for(self):
+        y = 0.5 * (self.x / 1000.0) ** -7.5
+        self.assertLessEqual(lsm.fit_power_law(self.x, y, p_hi=5.0)[1], 5.0)
+
     def test_fixed_exponent_and_fixed_slope(self):
         y = 0.05 * (self.x / 1000.0) ** -3.0 - 2e-5 * self.x
         vs, p, m, rms = lsm.fit_power_law(self.x, y, P=3.0, m=2e-5)
@@ -232,6 +285,92 @@ class TestPanelOffsetLock(unittest.TestCase):
         self.assertEqual(self.app._sc_OFF['value'].get(), 0.0)
         self.assertEqual(self.app._sc_M['value'].get(), 0.0)           # slope stays fixed at 0 by default
         self.assertIn("offset fixed at 0", self.app._sc_fit_label.cget("text"))
+
+    def test_auto_follows_an_exponent_above_5_and_the_slider_grows(self):
+        x = self.app._sc_x
+        self.app._sc_y = 0.5 * (x / 1000.0) ** -7.0
+        self.app._sc_OFF_lock.set(True)
+        self.app._sc_auto()
+        self.assertAlmostEqual(self.app._sc_P['value'].get(), 7.0, places=2)
+        self.assertGreaterEqual(self.app._sc_P['hi'], 7.0)             # the slider range was extended
+
+    def test_the_general_auto_fit_is_not_limited_to_5_either(self):
+        x = self.app._sc_x
+        self.app._sc_y = 0.0015 * (x / 1000.0) ** -6.0 + 0.002        # a realistic amplitude: 0.8 at 350 nm
+        self.app._sc_auto()
+        self.assertAlmostEqual(self.app._sc_P['value'].get(), 6.0, places=1)
+        self.assertGreaterEqual(self.app._sc_P['hi'], 6.0)
+
+    def test_vs_follows_a_very_large_exponent_in_both_fits(self):
+        x = self.app._sc_x
+        for lock, P_true, off in ((True, 20, 0.0), (False, 12, 0.0), (False, 20, 0.003)):
+            vs = 0.35 ** P_true                                           # an absorbance of 1 at 350 nm
+            self.app._sc_y = vs * (x / 1000.0) ** -P_true + off
+            self.app._linked_set(self.app._sc_P, 2.0)
+            self.app._sc_OFF_lock.set(lock)
+            self.app._sc_auto()
+            self.assertAlmostEqual(self.app._sc_P['value'].get(), P_true, delta=0.15 if lock and off else 0.02)
+            self.assertAlmostEqual(self.app._sc_VS['value'].get() / vs, 1.0, delta=0.3 if off else 0.01)
+            # the slider range follows VS, and the box holds it with enough digits (a re-read must not zero it)
+            self.assertLess(self.app._sc_VS['hi'], 1e-3)
+            self.assertAlmostEqual(float(self.app._sc_VS['entry'].get()) / self.app._sc_VS['value'].get(), 1.0, places=4)
+
+    def test_reopening_the_panel_resets_the_vs_range(self):
+        x = self.app._sc_x
+        self.app._sc_y = 0.35 ** 12 * (x / 1000.0) ** -12.0
+        self.app._sc_OFF_lock.set(True)
+        self.app._sc_auto()
+        self.assertLess(self.app._sc_VS['hi'], 1e-3)
+        self.app._sc_annulla()
+        self.app.apri_correzione_scattering()
+        self.assertEqual(self.app._sc_VS['hi'], 1.0)
+
+    def test_the_general_auto_fit_keeps_the_trace_under_the_spectrum_after_rounding(self):
+        x = self.app._sc_x
+        rng = np.random.default_rng(1)
+        cases = (0.07 * (x / 1000.0) ** -2.6 + 0.01 + rng.normal(0, 0.002, x.size),
+                 0.05 * (x / 1000.0) ** -4 + 0.15 * np.exp(-0.5 * ((x - 520) / 25) ** 2) + 0.01 + rng.normal(0, 0.001, x.size),
+                 0.35 ** 10 * (x / 1000.0) ** -10 + 0.004 + rng.normal(0, 0.0005, x.size))
+        for y in cases:
+            self.app._sc_y = y
+            self.app._linked_set(self.app._sc_P, 2.0)
+            self.app._sc_OFF_lock.set(False)
+            self.app._sc_auto()
+            VS, P, M, OFF = (self.app._sc_VS['value'].get(), self.app._sc_P['value'].get(),
+                             self.app._sc_M['value'].get(), self.app._sc_OFF['value'].get())
+            trace = VS * (x / 1000.0) ** -P - M * x + OFF                  # with the values as shown in the panel
+            self.assertLessEqual(float(np.max(trace - y)), 1e-9)
+
+    def test_keep_under_data_flag_is_only_available_with_the_offset_fixed_and_forces_the_trace_under(self):
+        x = self.app._sc_x
+        self.assertEqual(str(self.app._sc_under_cb.cget("state")), "disabled")
+        self.app._sc_OFF_lock.set(True)
+        self.assertEqual(str(self.app._sc_under_cb.cget("state")), "normal")
+        rng = np.random.default_rng(2)
+        y = 0.07 * (x / 1000.0) ** -2.6 + rng.normal(0, 0.002, x.size)
+        self.app._sc_y = y
+        self.app._sc_auto()
+        VS, P = self.app._sc_VS['value'].get(), self.app._sc_P['value'].get()
+        self.assertGreater(float(np.max(VS * (x / 1000.0) ** -P - y)), 0.0)  # plain least squares crosses the noise
+        self.app._sc_UNDER.set(True)
+        self.app._sc_auto()
+        VS, P, M = self.app._sc_VS['value'].get(), self.app._sc_P['value'].get(), self.app._sc_M['value'].get()
+        self.assertLessEqual(float(np.max(VS * (x / 1000.0) ** -P - M * x - y)), 1e-9)      # the panel's own values
+        self.assertEqual(self.app._sc_OFF['value'].get(), 0.0)
+        self.assertIn("kept under the data", self.app._sc_fit_label.cget("text"))
+
+    def test_keep_under_data_starts_also_when_some_points_are_not_positive(self):
+        x = self.app._sc_x
+        y = 0.07 * (x / 1000.0) ** -2.6
+        y[-40:] = -0.0005                                                  # a negative tail, as after a blank subtraction
+        self.app._sc_y = y
+        self.app._sc_OFF_lock.set(True)
+        self.app._sc_UNDER.set(True)
+        self.app._sc_auto()
+        VS, P = self.app._sc_VS['value'].get(), self.app._sc_P['value'].get()
+        self.assertGreater(VS, 0.0)
+        self.assertLessEqual(float(np.max((VS * (x / 1000.0) ** -P - y)[y > 0])), 1e-9)
+        self.assertIn("40 points at or below zero", self.app._sc_fit_label.cget("text"))
 
     def test_ticking_the_box_zeroes_the_offset(self):
         self.app._linked_set(self.app._sc_OFF, 0.05)

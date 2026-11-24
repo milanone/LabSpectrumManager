@@ -218,12 +218,23 @@ SIM_BUTTON_TIPS = {
 }
 
 
-def fit_power_law(x, y, P=None, m=0.0, p_lo=1.0, p_hi=5.0):
+def fit_power_law(x, y, P=None, m=0.0, p_lo=1.0, p_hi=None, under=None):
     """Least-squares fit of y = VS*(x/1000)^-P - m*x with NO offset (plain, unconstrained).
-    P=None optimises the exponent in [p_lo, p_hi] (grid scan, VS and the slope are linear so they are solved
-    exactly at each P); m=None fits the slope too, a number keeps it fixed. Returns (VS, P, m, rms)."""
+    P=None optimises the exponent above p_lo (grid scan, VS and the slope are linear so they are solved exactly at
+    each P). There is no upper limit by default: the scan starts at p_lo..5 and, when the best exponent is at its upper
+    edge, goes on in steps of 5 until the optimum is inside (a safety stop at 200, far beyond any physical exponent);
+    a number as p_hi restores a limit. m=None fits the slope too, a number keeps it fixed. Returns (VS, P, m, rms).
+    under=(xc, yc) forces the trace to stay at or below the points yc at xc (also outside the fitted window): with no
+    offset to lower, VS gives way (for a fixed slope VS = min(least-squares VS, min over the points of the value that
+    touches the first one); a free slope is solved with SLSQP). Points of yc at or below zero are left out of the
+    constraint (a trace with VS >= 0 cannot go under them; they would force VS = 0). The returned P (3 decimals), slope
+    (8 decimals) and VS (6 significant digits, rounded down) are the rounded values and the constraint holds for them."""
     x = np.asarray(x, float)
     y = np.asarray(y, float)
+    if under is not None:
+        xc, yc = np.asarray(under[0], float), np.asarray(under[1], float)
+        keep = yc > 0                       # a trace with VS >= 0 cannot go under a point at or below zero: leave those out
+        xc, yc = xc[keep], yc[keep]
 
     def solve(p):
         t = (x / 1000.0) ** -p
@@ -234,13 +245,55 @@ def fit_power_law(x, y, P=None, m=0.0, p_lo=1.0, p_hi=5.0):
             vs, mm = float((t @ (y + m * x)) / (t @ t)), float(m)
         return vs, mm, float(np.sqrt(np.mean((y - (vs * t - mm * x)) ** 2)))
 
+    def solve_under(p, mm_fixed):
+        """Constrained VS (and slope when mm_fixed is None) at the exponent p."""
+        t, tc = (x / 1000.0) ** -p, (xc / 1000.0) ** -p
+        if mm_fixed is not None:
+            vs = float((t @ (y + mm_fixed * x)) / (t @ t))
+            vs = max(min(vs, float(np.min((yc + mm_fixed * xc) / tc)) if yc.size else vs), 0.0)
+            return vs, float(mm_fixed), float(np.sqrt(np.mean((y - (vs * t - mm_fixed * x)) ** 2)))
+        try:
+            from scipy.optimize import minimize
+        except ImportError:
+            return solve_under(p, 0.0)
+        A, Ac = np.column_stack([t, -x]), np.column_stack([tc, -xc])
+        sc = np.maximum(np.abs(A).max(axis=0), 1e-300)
+        As, Acs = A / sc, Ac / sc
+        q0, *_ = np.linalg.lstsq(As, y, rcond=None)
+        res = minimize(lambda q: float((As @ q - y) @ (As @ q - y)), q0, jac=lambda q: 2.0 * As.T @ (As @ q - y),
+                       method='SLSQP', bounds=[(0.0, None), (None, None)],
+                       constraints=[{'type': 'ineq', 'fun': lambda q: yc - Acs @ q, 'jac': lambda q: -Acs}],
+                       options={'maxiter': 200, 'ftol': 1e-14})
+        vs, mm = (res.x / sc) if np.all(np.isfinite(res.x)) else (0.0, 0.0)
+        return float(vs), float(mm), float(np.sqrt(np.mean((y - (vs * t - mm * x)) ** 2)))
+
+    def finish_under(p, mm):
+        """Round P and the slope, then recompute VS under the constraint and round it down."""
+        p = round(float(p), 3)
+        mm = round(float(mm), 8)
+        vs, _, r = solve_under(p, mm)
+        vs = float(f"{vs * (1.0 - 2e-6):.6g}")
+        t = (x / 1000.0) ** -p
+        return vs, p, mm, float(np.sqrt(np.mean((y - (vs * t - mm * x)) ** 2)))
+
     if P is not None:
+        if under is not None:
+            return finish_under(P, m if m is not None else solve_under(float(P), None)[1])
         vs, mm, r = solve(float(P))
         return vs, float(P), mm, r
-    grid = np.linspace(p_lo, p_hi, 161)
-    best = min(grid, key=lambda p: solve(p)[2])
-    fine = np.linspace(max(p_lo, best - 0.025), min(p_hi, best + 0.025), 101)
-    best = min(fine, key=lambda p: solve(p)[2])
+    hi = 5.0 if p_hi is None else float(p_hi)
+    step = 0.025 if under is None else 0.05
+    score = (lambda p: solve(p)[2]) if under is None else (lambda p: solve_under(p, m)[2])
+    while True:
+        grid = np.linspace(p_lo, hi, int(round((hi - p_lo) / step)) + 1)
+        best = min(grid, key=score)
+        if p_hi is not None or best < hi - 1e-9 or hi >= 200.0:
+            break
+        hi += 5.0                                      # the optimum is at the edge of the range: keep going
+    fine = np.linspace(max(p_lo, best - step), best + step if p_hi is None else min(hi, best + step), 101)
+    best = min(fine, key=score)
+    if under is not None:
+        return finish_under(best, solve_under(best, m)[1])
     vs, mm, r = solve(best)
     return vs, float(best), mm, r
 
@@ -741,7 +794,7 @@ class LabSpectrumManager:
         ctrl.pack(fill=tk.X, padx=10, pady=6)
 
         # Tre parametri, ciascuno slider fine + casella editabile (valori a piacimento)
-        self._sc_VS  = self._make_linked_row(ctrl, 'VS',        0.0,    1.0,   0.001,    '{:.4f}')
+        self._sc_VS  = self._make_linked_row(ctrl, 'VS',        0.0,    1.0,   0.001,    '{:.6g}')
         self._sc_M   = self._make_linked_row(ctrl, 'Slope (m)', -0.001, 0.001, 0.000002, '{:.6f}')
         self._sc_M_lock = tk.BooleanVar(value=True)
         m_lock_row = tk.Frame(ctrl, bg=bg)
@@ -761,6 +814,13 @@ class LabSpectrumManager:
                        font=('Consolas', 8),
                        command=lambda: self._sc_OFF_lock.get() and self._linked_set(self._sc_OFF, 0.0)
                        ).pack(side=tk.LEFT, padx=(10, 0))
+        # With the offset fixed at 0 the fit is plain least squares; this flag forces the trace under the data anyway
+        self._sc_UNDER = tk.BooleanVar(value=False)
+        self._sc_under_cb = tk.Checkbutton(off_lock_row, text='keep under data', variable=self._sc_UNDER, bg=bg,
+                                           font=('Consolas', 8), state=tk.DISABLED)
+        self._sc_under_cb.pack(side=tk.LEFT, padx=(6, 0))
+        self._sc_OFF_lock.trace_add('write', lambda *_: self._sc_under_cb.config(
+            state=tk.NORMAL if self._sc_OFF_lock.get() else tk.DISABLED))
 
         # Esponente P: slider continuo + casella, con preset 1/2/3/4 e blocco "fix P"
         self._sc_P = self._make_linked_row(ctrl, 'P', 1.0, 5.0, 0.01, '{:.2f}')
@@ -842,6 +902,22 @@ class LabSpectrumManager:
         st['value'].set(value)   # trace → preview
         st['syncing'] = False
 
+    def _sc_set_VS(self, value):
+        """Set VS (6 significant digits, not decimals: with a large P it is tiny). The slider range and step follow the
+        value (a power of 10 above twice the value), so that the slider stays usable; the box is free anyway."""
+        value = float(f"{value:.6g}")
+        st = self._sc_VS
+        if value > st['hi'] or (0 < value < 0.05 * st['hi']):
+            hi = 10.0 ** np.ceil(np.log10(max(2.0 * value, 1e-15)))
+            self._linked_set_range(st, 0.0, hi, hi / 1000.0)
+        self._linked_set(st, value)
+
+    def _sc_set_P(self, value):
+        """Set the exponent P; the slider range grows when the fitted value is above it (P has no upper limit)."""
+        if value > self._sc_P['hi']:
+            self._linked_set_range(self._sc_P, self._sc_P['lo'], float(np.ceil(value * 1.2)), 0.01)
+        self._linked_set(self._sc_P, value)
+
     def _linked_from_slider(self, st, val):
         if st['syncing']:
             return
@@ -893,6 +969,7 @@ class LabSpectrumManager:
         self._linked_set(self._sc_M,   0.0)
         self._sc_M_lock.set(True)
         self._linked_set(self._sc_OFF, 0.0)
+        self._linked_set_range(self._sc_P, 1.0, 5.0, 0.01)
         self._linked_set(self._sc_P, 2.0)
         self._sc_label_nome.config(text=name)
 
@@ -986,20 +1063,30 @@ class LabSpectrumManager:
 
         if self._sc_OFF_lock.get():
             # Offset fixed at 0: plain least squares of the pure power law. The "trace <= spectrum" constraint of the
-            # general fit is dropped here: with no offset to lower, it would push the trace below the data and bias P.
+            # general fit is dropped here by default (with no offset to lower, it pushes the trace below the data and
+            # biases P); the "keep under data" flag puts it back, with VS giving way.
+            keep_under = self._sc_UNDER.get()
+            n_zero = int(np.sum(y <= 0)) if keep_under else 0
             VS_f, P_f, M_f, rmse = fit_power_law(x_ref, y_ref, P=P0 if lock_P else None,
-                                                 m=M0_fixed if lock_M else None)
-            self._linked_set(self._sc_VS, round(max(VS_f, 0.0), 6))
+                                                 m=M0_fixed if lock_M else None,
+                                                 under=(x, y) if keep_under else None)
+            self._sc_set_VS(max(VS_f, 0.0))
             self._linked_set(self._sc_OFF, 0.0)
             if not lock_M:
                 self._linked_set(self._sc_M, round(M_f, 8))
             if not lock_P:
-                self._linked_set(self._sc_P, round(P_f, 3))
+                self._sc_set_P(round(P_f, 3))
             self._sc_fit_label.config(
                 text=f"Auto fit {x_lo:.1f}–{x_hi:.1f} nm, {len(x_ref)} points, rms residual {rmse:.3g}; "
-                     f"offset fixed at 0 (plain least squares), P {'fixed' if lock_P else 'optimised'}, "
-                     f"slope {'fixed' if lock_M else 'optimised'}")
+                     f"offset fixed at 0 ({'least squares with the trace kept under the data' if keep_under else 'plain least squares'}"
+                     f"{f'; {n_zero} points at or below zero left out of the constraint' if n_zero else ''}), "
+                     f"P {'fixed' if lock_P else 'optimised'}, slope {'fixed' if lock_M else 'optimised'}")
             return
+
+        if not lock_P:
+            # Starting exponent from the plain power-law fit of the window (no offset): the optimiser then starts near
+            # the answer whatever P is, also a very large one (VS is then tiny and the slider value far from it).
+            P0 = float(min(fit_power_law(x_ref, y_ref, m=M0_fixed if lock_M else None)[1], 30.0))
 
         # Fit lineare iniziale a P fisso: VS*(x/1000)^-P - M*x + OFF = y (sulla finestra)
         A_ref = np.column_stack([
@@ -1050,16 +1137,17 @@ class LabSpectrumManager:
                 if np.all(np.isfinite(res.x)):
                     VS_fit, M_fit, OFF_fit = (res.x / s)
             else:
-                # P libero → modello non lineare: ottimizza anche l'esponente in [1, 5]
+                # P libero → modello non lineare: ottimizza anche l'esponente (da 1 in su, senza limite superiore)
                 def corr(q, xx):
                     vs, m, off, pp = q[0] / s[0], q[1] / s[1], q[2] / s[2], q[3]
                     return vs * (xx / 1000.0) ** -pp - m * xx + off
                 cons = [{'type': 'ineq', 'fun': lambda q: yc - corr(q, xc)}]
                 q0 = np.array([VS0 * s[0], M0 * s[1], OFF0 * s[2], P0])
-                res = minimize(lambda q: float((corr(q, x_ref) - y_ref) @ (corr(q, x_ref) - y_ref)),
-                               q0, method='SLSQP',
-                               bounds=[(0.0, None), m_bound, (None, None), (1.0, 5.0)],
-                               constraints=cons, options={'maxiter': 800, 'ftol': 1e-12})
+                with np.errstate(over='ignore', invalid='ignore'):      # the optimiser may probe huge exponents
+                    res = minimize(lambda q: float((corr(q, x_ref) - y_ref) @ (corr(q, x_ref) - y_ref)),
+                                   q0, method='SLSQP',
+                                   bounds=[(0.0, None), m_bound, (None, None), (1.0, None)],
+                                   constraints=cons, options={'maxiter': 800, 'ftol': 1e-12})
                 if np.all(np.isfinite(res.x)):
                     VS_fit = res.x[0] / s[0]
                     M_fit  = res.x[1] / s[1]
@@ -1068,22 +1156,28 @@ class LabSpectrumManager:
         except ImportError:
             pass
 
-        VS_fit = float(max(VS_fit, 0.0))
+        # The values shown and stored are rounded (P to 3 decimals, VS to 6 significant digits): the guarantee below
+        # is computed on the rounded ones, otherwise the trace could end above the spectrum by the rounding of P
+        # (up to 1e-4 at the blue end for a large P)
+        P_fit = round(P_fit, 3)
+        VS_fit = float(f"{max(VS_fit, 0.0):.6g}")
+        M_fit = round(float(M_fit), 8)
 
         # Garanzia finale su TUTTI i punti (il vincolo SLSQP era su griglia decimata)
         corr_full = VS_fit * (x / 1000.0) ** -P_fit - M_fit * x + OFF_fit
         over = float(np.max(corr_full - y))
         if over > 0:
             OFF_fit -= over
+        OFF_fit = float(np.floor(OFF_fit * 1e6) / 1e6)        # rounded down, so that it never lifts the trace
 
         # Usa i valori reali del fit (VS ≥ 0); se eccedono il range dello slider
         # la casella li mostra comunque e lo slider resta agganciato al massimo
-        self._linked_set(self._sc_VS,  round(VS_fit, 6))
+        self._sc_set_VS(VS_fit)
         self._linked_set(self._sc_OFF, round(float(OFF_fit), 6))
         if not lock_M:
             self._linked_set(self._sc_M, round(float(M_fit), 8))
         if not lock_P:
-            self._linked_set(self._sc_P, round(P_fit, 3))
+            self._sc_set_P(round(P_fit, 3))
         # how well the trace follows the spectrum in the window (the trace stays at or below it by construction)
         corr_win = VS_fit * (x_ref / 1000.0) ** -P_fit - M_fit * x_ref + OFF_fit
         rmse = float(np.sqrt(np.mean((y_ref - corr_win) ** 2)))
@@ -1385,7 +1479,7 @@ class LabSpectrumManager:
         new_info = dict(self.spectra[self._sc_name]['info'])
         new_info['Sample']         = new_name
         new_info['Derived from']   = self._sc_name
-        new_info['Scatter VS']     = f"{VS:.4f}"
+        new_info['Scatter VS']     = f"{VS:.6g}"
         new_info['Scatter P']      = str(P)
         new_info['Scatter Slope']  = f"{M:.6f}"
         new_info['Scatter Offset'] = f"{OFF:.3f}"
