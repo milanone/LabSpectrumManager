@@ -180,8 +180,9 @@ SIM_TIPS = {
          "amplitude is roughly proportional to the number of lamellae at a given lipid concentration.",
     'acc': "Collection half-angle of the instrument: the light scattered forward inside this cone still reaches the "
            "detector, so it does not count as absorbance. It is not in the instrument specifications and is a "
-           "property of the geometry; about 10° fits the samples measured so far. It matters for particles larger "
-           "than about 150 nm (it lowers their apparent P) and not for small ones.",
+           "property of the geometry; 10° is compatible with the samples measured so far but is not determined by "
+           "them. It matters for particles larger than about 150 nm (it lowers their apparent P) and not for "
+           "small ones.",
     't': "Thickness of the lipid (POPC) bilayer, nm, used as the scattering shell. In the simulator cholesterol "
          "thickens it (+0.4 nm per 10 mol%).",
     'dn': "Refractive index excess of the lipid shell over water (0.155 for egg lecithin, from the literature). Together with the "

@@ -93,7 +93,7 @@ Loaded spectra are stored in `self.spectra` (dict):
   the detector), `vesicle_population()` (log-normal average), `vesicle_P_curve()`; `scipy.special` is imported only inside
   `_mie_coefs()`. The former "P vs size (theory)" window (`_sc_curva_teorica`) was removed because the simulator covers it;
   `vesicle_P_curve()` stays as a pure function used by the tests and by `report/make_figures.py` (figure 5). Origin of the defaults: three POPC-cholesterol-PEG
-  spectra (UV-1900) with DLS (Horiba): half-angle ~10 deg fits all three; shell thickness and dn matter little for the
+  spectra (UV-1900) with DLS (Horiba): a half-angle of ~10 deg is compatible with all three (assumed, not determined: the 130 nm latex does not constrain it, the rms against the angle is flat between 2 and 15 deg and the absolute amplitude moves by only 1.8 % between 1 and 10 deg, against 6-8 % of concentration uncertainty; for liposomes it is degenerate with the size above ~300 nm; a certified standard of 500-1000 nm would pin it, the effect there being 10-60 %); shell thickness and dn matter little for the
   shape but set the absolute amplitude by a factor ~2-3; the 3-pass 450 nm sample looked multilamellar (~7 lamellae, from the
   amplitude at 10 mg/mL). Not verified: other instruments (the half-angle is instrument-specific), other lipids, vesicles
   below ~60 nm. `tests/test_scatter_mie.py`

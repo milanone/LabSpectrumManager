@@ -230,7 +230,7 @@ The method (Mie theory of a bilayer sphere, specific turbidity and wavelength ex
 - D. H. Melik, H. S. Fogler, *Turbidimetric determination of particle size distributions of colloidal systems*, J. Colloid Interface Sci. 92(1), 161 (1983).
 - C. Lo Pò et al., *Monte Carlo approach to the evaluation of nanoparticles size distribution from the analysis of UV-Vis-NIR spectra*, Micromachines 14, 2208 (2023), doi 10.3390/mi14122208.
 
-What comes from them and what are our own assumptions (collection half-angle 10°, shell parameters, multilamellar model, PEG film) is in section 9 of the [report](report/size_from_turbidity_report.md).
+What comes from them and what are our own assumptions (collection half-angle 10°, assumed and not determined by the measurements so far, shell parameters, multilamellar model, PEG film) is in section 9 of the [report](report/size_from_turbidity_report.md).
 
 ## License
 

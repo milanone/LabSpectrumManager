@@ -26,7 +26,8 @@ and of the dilution; for 100 nm vesicles and multilamellar batches the answer mu
 **UV-Vis model.** Absorbance `A = path / ln10 · N · C_ext(λ)`, with `N` the particle number density and `C_ext`
 the extinction cross-section from Mie theory (Bohren-Huffman), averaged over a log-normal size distribution
 (`σ ≈ CV`, `σ ≈ √PI` for DLS-derived widths). The light scattered within the collection half-angle of the
-spectrophotometer (10°, instrument-specific) still reaches the detector and is subtracted from the extinction.
+spectrophotometer (10°, assumed and instrument-specific: see section 8) still reaches the detector and is subtracted
+from the extinction.
 Solid spheres (latex): `N` from % w/v of solids, density 1.055 g/mL and the polystyrene index 1.591 at 590 nm
 with an approximate Cauchy dispersion. Vesicles: coated sphere (water core), bilayer 4.5 nm, index excess 0.155 (egg lecithin, section 9),
 `N` from the lipid concentration and the area per lipid; multilamellar vesicles are one shell of repeat
@@ -217,7 +218,15 @@ they differ, the difference carries information (a tail, a multilamellar fractio
 * One latex lot and one instrument pair; two dilutions are enough to compare, not to fit a trend.
 * The nominal concentration of L1 is uncertain by about 25 % (the volumes pipetted were not recorded).
 * The polystyrene index is the certified 1.591 at 590 nm with an approximate dispersion, worth about ±30 % on the
-  amplitude; the collection half-angle (10°) is instrument-specific.
+  amplitude.
+* The collection half-angle (10°) is assumed, not measured. Profiling the 130 nm latex against it (1:800, 1:400 and
+  1:200 dilutions, certified diameter and width, no free parameter) gives no minimum: the shape rms is flat between
+  2° and 15° (1:400: 2.0-2.1 %), 1:200 prefers angles below 2° and 1:800 prefers angles above 20°, and the absolute
+  amplitude changes by 1.8 % between 1° and 10°, against 6-8 % of uncertainty on the concentration. At 532 nm the
+  extinction of a sphere changes between 10° and 5° by +1 % (130 nm), +11 % (500 nm) and +28 % (800 nm), and between
+  10° and 20° by -5 %, -34 % and -61 %. The angle is therefore constrained by large spheres (500-1000 nm,
+  certified size and concentration), not by this latex; for liposomes it is degenerate with the size above about
+  300 nm.
 * DLS is larger than the TEM diameter (6-27 % at 90°); the cause (aggregates, dust, angle, electrostatics at
   10 mM NaCl) is not resolved. 173° gives 135 nm; the 90° repeat on a second tube gives 154 nm.
 * Liposomes: no independent measurement of the number of lamellae (cryo-TEM, SAXS, phosphate assay) and no
@@ -236,7 +245,7 @@ corrections, not the experimental part; Lo Pò et al. 2023, pages 1-5 of 13, the
 | Mie theory of a bilayer (coated) sphere | Khlebtsov et al. [1] use the same model, with Bohren and Huffman as the reference | standard |
 | Absolute amplitude from the mass concentration (specific turbidity) and wavelength exponent as the two observables | [1]; the exponent depends almost only on the outer radius, the specific turbidity on the shell thickness (4-5 nm for egg lecithin, monolamellar) | standard; our 4.5 nm agrees |
 | Average over a size distribution (number-weighted integral of the cross-section) | [1] (gamma distribution, parameter 4), [2] eq. 16, [3] (log-normal for the small particles, Gaussian for aggregates) | standard; the choice of distribution is ours (log-normal, sigma 0.2) |
-| Light scattered inside the detector acceptance angle still reaches the detector | [2] treat the finite acceptance half-angle (corrected scattering coefficient, refraction at the cell wall); [1] avoids it with an aperture diaphragm | principle standard; our **10° is an adjusted value** (about 2° in [2], a lens-pinhole instrument) |
+| Light scattered inside the detector acceptance angle still reaches the detector | [2] treat the finite acceptance half-angle (corrected scattering coefficient, refraction at the cell wall); [1] avoids it with an aperture diaphragm | principle standard; our **10° is an assumed value**, compatible with the liposome spectra and not determined by the latex (section 8); about 2° in [2], a lens-pinhole instrument |
 | Dispersion of the refractive index of water | [1] eq. 7: 1.3364 at 500 nm | same as ours (1.3365) |
 | Shell index excess over water | [1] eq. 8 for egg lecithin: about 1.491 at 500 nm, i.e. an excess of about **0.155** (0.159 at 400 nm, 0.152 at 700 nm) | ours is now 0.155 (the default); see below |
 | Fitting window for the exponent | [1]: 400-600 nm | ours: 400-800 nm, so the P(d) curves are not directly comparable |
