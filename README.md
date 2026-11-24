@@ -109,6 +109,12 @@ PlotStyleKit.
 pythonw LabSpectrumManager.pyw [spectrum_file]
 ```
 
+*Help > Check for updates...* asks GitHub (only when chosen, nothing is sent but a generic client name) for the latest
+published version and compares it with the one running (`__version__`). If a newer one exists, the window shows its
+release notes with *Download...* (saves `LabSpectrumManager_<version>.pyw` in a chosen folder: the running file is
+never replaced, an existing file is never overwritten, and a download that does not compile is discarded) and *Open on
+GitHub*. Versions are the tags (or releases) of the repository, `vMAJOR.MINOR.PATCH`.
+
 ## Interface
 
 Three panels side by side: a data table of the merged spectra on the left, a Matplotlib graph

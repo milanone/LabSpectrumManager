@@ -18,6 +18,64 @@ try:
 except ImportError:
     HAS_DND = False
 
+# ---- Version and update check (Help > Check for updates...) -----------------------------------------------------------
+__version__ = "1.0.0"
+GITHUB_REPO = "milanone/LabSpectrumManager"
+PROGRAM_FILE = "LabSpectrumManager.pyw"
+
+
+def parse_version(tag):
+    """'v1.2.3' -> (1, 2, 3); anything that is not a number after the dots (a suffix such as '-rc1') is ignored."""
+    nums = re.findall(r"\d+", str(tag).strip().lstrip("vV").split("-")[0])
+    return tuple(int(n) for n in nums) or (0,)
+
+
+def _github_get(url, timeout=10):
+    """GET with a generic client name (no personal data goes out); returns the response bytes."""
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "LabSpectrumManager-update-check",
+                                               "Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
+def fetch_latest_release(repo=GITHUB_REPO, timeout=10):
+    """Latest published version of the repository: {'tag', 'notes', 'url'}, or None when nothing is published.
+    Uses the latest GitHub release; with no release yet it falls back to the newest tag. Network errors propagate."""
+    import json as _json
+    import urllib.error
+    try:
+        d = _json.loads(_github_get(f"https://api.github.com/repos/{repo}/releases/latest", timeout))
+        return {"tag": d["tag_name"], "notes": d.get("body") or "", "url": d.get("html_url") or f"https://github.com/{repo}"}
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            raise
+    tags = _json.loads(_github_get(f"https://api.github.com/repos/{repo}/tags", timeout))
+    if not tags:
+        return None
+    best = max(tags, key=lambda t: parse_version(t["name"]))
+    return {"tag": best["name"], "notes": "", "url": f"https://github.com/{repo}/releases/tag/{best['name']}"}
+
+
+def download_release(tag, folder, repo=GITHUB_REPO, timeout=30):
+    """Download the program file of a tag into `folder` as LabSpectrumManager_<tag>.pyw. The running program is never
+    touched, and an existing file is never overwritten (a counter is added). The text must compile and contain the
+    program class, otherwise nothing is written. Returns the path."""
+    data = _github_get(f"https://raw.githubusercontent.com/{repo}/{tag}/{PROGRAM_FILE}", timeout)
+    text = data.decode("utf-8")
+    compile(text, PROGRAM_FILE, "exec")
+    if "class LabSpectrumManager" not in text:
+        raise ValueError("the downloaded file is not the program")
+    base = os.path.join(folder, f"LabSpectrumManager_{tag}")
+    path, n = base + ".pyw", 1
+    while os.path.exists(path):
+        n += 1
+        path = f"{base}_{n}.pyw"
+    with open(path, "wb") as f:
+        f.write(data)
+    return path
+
+
 # ---- PlotStyleKit bootstrap: the same text in every program (PlotStyleKit/README.md, 'Using it from a program') ----
 import json
 import os
@@ -593,6 +651,9 @@ class LabSpectrumManager:
         self.file_menu.add_separator()
         self.file_menu.add_command(label="Exit", command=self.on_exit)
         self.menu_bar.add_cascade(label="File", menu=self.file_menu)
+        self.help_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.help_menu.add_command(label="Check for updates...", command=self.check_for_updates)
+        self.menu_bar.add_cascade(label="Help", menu=self.help_menu)
         self.root.config(menu=self.menu_bar)
         self.root.protocol("WM_DELETE_WINDOW", self.on_exit)
 
@@ -5267,6 +5328,80 @@ class LabSpectrumManager:
                 parent=self.root):
             self.plotstylekit_dialog()
         return psk is not None
+
+    # ---- Help > Check for updates ----------------------------------------------------------------------------------
+    def check_for_updates(self):
+        """Ask GitHub for the latest version (in a thread, so the window does not freeze) and show the result."""
+        import threading
+
+        def work():
+            try:
+                out, err = fetch_latest_release(), None
+            except Exception as e:                     # no network, rate limit, proxy...: reported, never raised
+                out, err = None, e
+            try:
+                self.root.after(0, lambda: self._update_result(out, err))
+            except RuntimeError:                       # the window was closed meanwhile
+                pass
+
+        self.root.config(cursor="watch")
+        threading.Thread(target=work, daemon=True).start()
+
+    def _update_result(self, rel, err):
+        """Show what the check found: an error, 'up to date', or the new version with its notes and the buttons."""
+        self.root.config(cursor="")
+        if err is not None:
+            messagebox.showwarning("Check for updates", f"GitHub could not be queried:\n{err}", parent=self.root)
+            return
+        if rel is None:
+            messagebox.showinfo("Check for updates", f"No published version was found for {GITHUB_REPO}.", parent=self.root)
+            return
+        if parse_version(rel["tag"]) <= parse_version(__version__):
+            messagebox.showinfo("Check for updates", f"LabSpectrumManager {__version__} is up to date "
+                                f"(latest published version: {rel['tag']}).", parent=self.root)
+            return
+        win = tk.Toplevel(self.root)
+        win.title("Update available")
+        win.transient(self.root)
+        tk.Label(win, text=f"Version {rel['tag']} is available (this is {__version__}).",
+                 font=('Segoe UI', 10, 'bold')).pack(anchor='w', padx=12, pady=(12, 4))
+        notes = scrolledtext.ScrolledText(win, width=70, height=12, wrap=tk.WORD)
+        notes.insert('1.0', rel['notes'].strip() or "No release notes.")
+        notes.config(state=tk.DISABLED)
+        notes.pack(padx=12, pady=4)
+        tk.Label(win, text="Download saves the new file in the chosen folder (the program's own folder is proposed); "
+                 "the running program is not replaced. Close it and start the new file when ready.",
+                 wraplength=520, justify='left',
+                 fg='#555555').pack(anchor='w', padx=12, pady=(0, 4))
+        row = tk.Frame(win)
+        row.pack(pady=(4, 12))
+        win._update_rel = rel                            # test handle
+        tk.Button(row, text="Download...", command=lambda: self._update_download(rel['tag'], win)).pack(side=tk.LEFT, padx=4)
+        tk.Button(row, text="Open on GitHub", command=lambda: self._open_url(rel['url'])).pack(side=tk.LEFT, padx=4)
+        tk.Button(row, text="Close", command=win.destroy).pack(side=tk.LEFT, padx=4)
+
+    def _open_url(self, url):
+        import webbrowser
+        webbrowser.open(url)
+
+    def _update_download(self, tag, win):
+        """Choose a folder and save the new program file there; the running file is never touched."""
+        folder = filedialog.askdirectory(parent=win, title="Folder for the new version",
+                                         initialdir=os.path.dirname(os.path.abspath(__file__)))
+        if not folder:
+            return
+        try:
+            win.config(cursor="watch")
+            win.update_idletasks()
+            path = download_release(tag, folder)
+        except Exception as e:
+            messagebox.showwarning("Download", f"The new version could not be downloaded:\n{e}", parent=win)
+            return
+        finally:
+            win.config(cursor="")
+        messagebox.showinfo("Download", f"Saved as:\n{path}\n\nThe running program was not changed. Close it and start "
+                            "the new file to use it.",
+                            parent=win)
 
 
 if __name__ == "__main__":
