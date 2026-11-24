@@ -105,7 +105,9 @@ Loaded spectra are stored in `self.spectra` (dict):
   without overwriting). `Help > Check for updates...` -> `check_for_updates()` (thread, so the window does not freeze) ->
   `_update_result()` (message or "Update available" window with notes, Download..., Open on GitHub). Deliberately NOT a
   self-replacing update: the running file is never touched. `tests/test_updates.py` mocks `_github_get` (no network).
-  Verified live only for the "nothing published" answer (the repository has no release or tag yet).
+  Verified live against the real repository: before the first release the answer was "nothing published"; with release
+  `v1.0.0` the query returns it and the downloaded file is identical to the committed one. The "newer version" window
+  was only seen with a fake release (the real flow needs a version above the running one).
 - `LabSpectrumManager.__init__` binds `<ButtonPress-1>` on the `Button` class to `focus_set()`: a Tk button does not take the focus
   when clicked, so a number typed in an entry and not confirmed with Enter (Trim limits, fit range, baseline anchors, ...) was
   not committed before the button's command ran. `tests/test_entry_commit_on_button.py` clicks Apply with real Tk events
